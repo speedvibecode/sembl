@@ -1,7 +1,8 @@
 import type { NextRequest } from "next/server";
 import { fail, ok } from "@/lib/api-response";
 import { requireRouteUser } from "@/lib/auth";
-import { getGraphVersions, PROJECT_ID } from "@/lib/semantic-store";
+import { PROJECT_ID } from "@/lib/semantic-store";
+import { getRuntimeGraphVersions } from "@/lib/runtime-store";
 
 export async function GET(
   request: NextRequest,
@@ -15,7 +16,7 @@ export async function GET(
       return fail("not_found", "Graph versions are not visible.", 404);
     }
 
-    return ok(getGraphVersions());
+    return ok(await getRuntimeGraphVersions());
   } catch (error) {
     return fail(
       "unauthorized",

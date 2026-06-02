@@ -1,7 +1,8 @@
 import type { NextRequest } from "next/server";
 import { fail, ok } from "@/lib/api-response";
 import { requireAdmin, requireRouteUser } from "@/lib/auth";
-import { getExecution, PROJECT_ID } from "@/lib/semantic-store";
+import { PROJECT_ID } from "@/lib/semantic-store";
+import { getRuntimeExecution } from "@/lib/runtime-store";
 
 export async function POST(
   request: NextRequest,
@@ -16,7 +17,7 @@ export async function POST(
       return fail("not_found", "Execution is not visible.", 404);
     }
 
-    const execution = getExecution(runId);
+    const execution = await getRuntimeExecution(runId);
     if (!execution) {
       return fail("not_found", "Execution does not exist.", 404);
     }

@@ -1,7 +1,8 @@
 import type { NextRequest } from "next/server";
 import { fail, ok } from "@/lib/api-response";
 import { requireRouteUser } from "@/lib/auth";
-import { getApproval, PROJECT_ID } from "@/lib/semantic-store";
+import { PROJECT_ID } from "@/lib/semantic-store";
+import { getRuntimeApprovals } from "@/lib/runtime-store";
 
 export async function GET(
   request: NextRequest,
@@ -15,7 +16,9 @@ export async function GET(
       return fail("not_found", "Approval is not visible.", 404);
     }
 
-    const approval = getApproval(approvalId);
+    const approval = (await getRuntimeApprovals()).find(
+      (item) => item.id === approvalId
+    );
     if (!approval) {
       return fail("not_found", "Approval does not exist.", 404);
     }

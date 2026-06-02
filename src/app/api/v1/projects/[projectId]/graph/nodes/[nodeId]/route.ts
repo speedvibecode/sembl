@@ -1,7 +1,8 @@
 import type { NextRequest } from "next/server";
 import { fail, ok } from "@/lib/api-response";
 import { requireRouteUser } from "@/lib/auth";
-import { getNode, PROJECT_ID } from "@/lib/semantic-store";
+import { PROJECT_ID } from "@/lib/semantic-store";
+import { getRuntimeNode } from "@/lib/runtime-store";
 
 export async function GET(
   request: NextRequest,
@@ -15,7 +16,7 @@ export async function GET(
       return fail("not_found", "Graph node is not visible.", 404);
     }
 
-    const node = getNode(nodeId);
+    const node = await getRuntimeNode(nodeId);
     if (!node) {
       return fail("not_found", "Graph node does not exist.", 404);
     }

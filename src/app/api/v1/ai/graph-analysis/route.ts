@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { fail, ok } from "@/lib/api-response";
-import { getGraphSummary } from "@/lib/semantic-store";
+import { getRuntimeGraphSummary } from "@/lib/runtime-store";
 
 const graphAnalysisSchema = z.object({
   apiKey: z.string().optional(),
@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const summary = getGraphSummary();
+    const summary = await getRuntimeGraphSummary();
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {

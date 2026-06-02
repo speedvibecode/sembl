@@ -1,7 +1,8 @@
 import type { NextRequest } from "next/server";
 import { fail, ok } from "@/lib/api-response";
 import { requireRouteUser } from "@/lib/auth";
-import { getSubgraph, PROJECT_ID } from "@/lib/semantic-store";
+import { PROJECT_ID } from "@/lib/semantic-store";
+import { getRuntimeSubgraph } from "@/lib/runtime-store";
 
 export async function GET(
   request: NextRequest,
@@ -16,7 +17,10 @@ export async function GET(
     }
 
     const depth = Number(request.nextUrl.searchParams.get("depth") ?? "2");
-    const subgraph = getSubgraph(nodeId, Number.isFinite(depth) ? depth : 2);
+    const subgraph = await getRuntimeSubgraph(
+      nodeId,
+      Number.isFinite(depth) ? depth : 2
+    );
     if (!subgraph) {
       return fail("not_found", "Graph node does not exist.", 404);
     }

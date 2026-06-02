@@ -1,7 +1,7 @@
 {
   "schema_version": "sembl.v4_3.release_readiness_report.v1",
-  "generated_at": "2026-06-02T13:10:00.000Z",
-  "status": "ready_for_vercel_deployment_with_supabase_apply_pending",
+  "generated_at": "2026-06-02T14:12:00.000Z",
+  "status": "ready_for_production_deployment",
   "evidence": {
     "graph_validation": {
       "status": "passed",
@@ -31,10 +31,32 @@
         "graph API response envelope"
       ]
     },
-    "supabase_migration": {
-      "status": "created_not_remote_applied",
-      "migration": "supabase/migrations/20260602124708_initial_sembl_v1_runtime.sql",
-      "blocking_reason": "Supabase CLI dry run requires SUPABASE_DB_PASSWORD in this shell. Supabase MCP was added and authenticated, but its SQL tools did not hot-load into the current session."
+    "supabase_migrations": {
+      "status": "remote_applied_verified",
+      "migrations": [
+        "supabase/migrations/20260602124708_initial_sembl_v1_runtime.sql",
+        "supabase/migrations/20260602134518_seed_sembl_core_runtime.sql"
+      ],
+      "remote_history": ["20260602124708", "20260602134518"],
+      "verification": {
+        "app_table_count": 27,
+        "rls_enabled_count": 27,
+        "policy_count": 30,
+        "seeded_rows": {
+          "auth.users": 1,
+          "workspaces": 1,
+          "projects": 1,
+          "specification_documents": 8,
+          "specification_revisions": 8,
+          "graph_nodes": 34,
+          "graph_edges": 25,
+          "approvals": 1,
+          "execution_runs": 1,
+          "execution_tasks": 13,
+          "reconciliation_attempts": 1,
+          "deployments": 1
+        }
+      }
     },
     "supabase_mcp": {
       "status": "configured_authenticated",
@@ -49,6 +71,10 @@
       "status": "passed",
       "command": "vercel build --prod"
     },
+    "vercel_environment": {
+      "status": "configured",
+      "server_only_variables": ["SUPABASE_DB_URL"]
+    },
     "browser_verification": {
       "status": "playwright_fallback_used",
       "reason": "In-app Browser node runtime failed with Windows sandbox spawn setup refresh before opening a tab."
@@ -59,6 +85,7 @@
     "Graph Explorer is read-only and derives from graph/normalized_graph.json.",
     "API routes use the /api/v1 response envelope and keep graph mutation out of the public graph surface.",
     "Execution start is approval-gated in the route layer.",
-    "AI graph analysis accepts a runtime OpenAI key and does not persist it."
+    "AI graph analysis accepts a runtime OpenAI key and does not persist it.",
+    "Server routes prefer Supabase runtime data when SUPABASE_DB_URL is configured, with graph artifacts as fallback."
   ]
 }

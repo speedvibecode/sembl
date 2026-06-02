@@ -1,7 +1,8 @@
 import type { NextRequest } from "next/server";
 import { fail, ok } from "@/lib/api-response";
 import { requireRouteUser } from "@/lib/auth";
-import { getExecutionTasks, PROJECT_ID } from "@/lib/semantic-store";
+import { PROJECT_ID } from "@/lib/semantic-store";
+import { getRuntimeExecutionTasks } from "@/lib/runtime-store";
 
 export async function GET(
   request: NextRequest,
@@ -15,7 +16,7 @@ export async function GET(
       return fail("not_found", "Execution tasks are not visible.", 404);
     }
 
-    return ok(getExecutionTasks(runId));
+    return ok(await getRuntimeExecutionTasks(runId));
   } catch (error) {
     return fail(
       "unauthorized",

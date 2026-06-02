@@ -2,10 +2,10 @@ import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { fail, ok } from "@/lib/api-response";
 import { requireAdmin, requireRouteUser } from "@/lib/auth";
+import { getRuntimeExecutions } from "@/lib/runtime-store";
 import {
   BRANCH_ID,
   createExecutionRun,
-  getExecutions,
   PROJECT_ID
 } from "@/lib/semantic-store";
 
@@ -26,7 +26,7 @@ export async function GET(
       return fail("not_found", "Executions are not visible.", 404);
     }
 
-    return ok(getExecutions());
+    return ok(await getRuntimeExecutions());
   } catch (error) {
     return fail(
       "unauthorized",
