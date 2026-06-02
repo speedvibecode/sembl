@@ -71,8 +71,27 @@ type DbApprovalRow = {
   created_at: Date | string;
 };
 
-const connectionString = process.env.SUPABASE_DB_URL ?? process.env.POSTGRES_URL;
+const rawConnectionString = process.env.SUPABASE_DB_URL ?? process.env.POSTGRES_URL;
 const globalForPg = globalThis as typeof globalThis & { __semblPgPool?: Pool };
+
+function normalizeConnectionString(value: string | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    const url = new URL(value);
+    url.searchParams.delete("sslmode");
+    url.searchParams.delete("sslcert");
+    url.searchParams.delete("sslkey");
+    url.searchParams.delete("sslrootcert");
+    return url.toString();
+  } catch {
+    return value.replace(/[?&]sslmode=[^&]+/i, "");
+  }
+}
+
+const connectionString = normalizeConnectionString(rawConnectionString);
 
 function getPool() {
   if (!connectionString) {
