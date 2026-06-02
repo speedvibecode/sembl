@@ -1,8 +1,7 @@
 import type { NextRequest } from "next/server";
 import { fail, ok } from "@/lib/api-response";
 import { requireAdmin, requireRouteUser } from "@/lib/auth";
-import { PROJECT_ID } from "@/lib/semantic-store";
-import { getRuntimeExecution } from "@/lib/runtime-store";
+import { retryRuntimeExecution } from "@/lib/runtime-store";
 
 export async function POST(
   request: NextRequest,
@@ -13,24 +12,12 @@ export async function POST(
     requireAdmin(user);
     const { projectId, runId } = await params;
 
-    if (projectId !== PROJECT_ID) {
-      return fail("not_found", "Execution is not visible.", 404);
-    }
-
-    const execution = await getRuntimeExecution(runId);
-    if (!execution) {
-      return fail("not_found", "Execution does not exist.", 404);
-    }
-
-    return ok({
-      ...execution,
-      id: `retry_${Date.now()}`,
-      status: "queued",
-      triggered_by: user.id,
-      created_at: new Date().toISOString()
-    });
+    return ok(await retryRuntimeExecution(user.id, projectId, runId));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unauthorized request.";
+    if (message === "not_found") {
+      return fail("not_found", "Execution does not exist.", 404);
+    }
     return fail(message === "forbidden" ? "unauthorized" : "unauthorized", message, 401);
   }
 }

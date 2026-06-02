@@ -1,7 +1,6 @@
 import type { NextRequest } from "next/server";
 import { fail, ok } from "@/lib/api-response";
 import { requireRouteUser } from "@/lib/auth";
-import { PROJECT_ID } from "@/lib/semantic-store";
 import { getRuntimeGraphVersion } from "@/lib/runtime-store";
 
 export async function GET(
@@ -9,14 +8,10 @@ export async function GET(
   { params }: { params: Promise<{ projectId: string; versionId: string }> }
 ) {
   try {
-    await requireRouteUser(request);
+    const user = await requireRouteUser(request);
     const { projectId, versionId } = await params;
 
-    if (projectId !== PROJECT_ID) {
-      return fail("not_found", "Graph version is not visible.", 404);
-    }
-
-    const version = await getRuntimeGraphVersion(versionId);
+    const version = await getRuntimeGraphVersion(user.id, projectId, versionId);
     if (!version) {
       return fail("not_found", "Graph version does not exist.", 404);
     }

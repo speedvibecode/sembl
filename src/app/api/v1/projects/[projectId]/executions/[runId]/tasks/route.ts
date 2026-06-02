@@ -1,27 +1,44 @@
 import type { NextRequest } from "next/server";
 import { fail, ok } from "@/lib/api-response";
-import { requireRouteUser } from "@/lib/auth";
-import { PROJECT_ID } from "@/lib/semantic-store";
-import { getRuntimeExecutionTasks } from "@/lib/runtime-store";
+import { requireAdmin, requireRouteUser } from "@/lib/auth";
+import {
+  advanceRuntimeExecution,
+  getRuntimeExecutionTasks
+} from "@/lib/runtime-store";
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string; runId: string }> }
 ) {
   try {
-    await requireRouteUser(request);
+    const user = await requireRouteUser(request);
     const { projectId, runId } = await params;
 
-    if (projectId !== PROJECT_ID) {
-      return fail("not_found", "Execution tasks are not visible.", 404);
-    }
-
-    return ok(await getRuntimeExecutionTasks(runId));
+    return ok(await getRuntimeExecutionTasks(user.id, projectId, runId));
   } catch (error) {
     return fail(
       "unauthorized",
       error instanceof Error ? error.message : "Unauthorized request.",
       401
     );
+  }
+}
+
+export async function POST(
+  request: NextRequest,
+  { params }: { params: Promise<{ projectId: string; runId: string }> }
+) {
+  try {
+    const user = await requireRouteUser(request);
+    requireAdmin(user);
+    const { projectId, runId } = await params;
+
+    return ok(await advanceRuntimeExecution(user.id, projectId, runId));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unauthorized request.";
+    if (message === "not_found") {
+      return fail("not_found", "Execution does not exist.", 404);
+    }
+    return fail(message === "forbidden" ? "unauthorized" : "unauthorized", message, 401);
   }
 }

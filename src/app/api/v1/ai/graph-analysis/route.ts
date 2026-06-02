@@ -1,11 +1,18 @@
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { fail, ok } from "@/lib/api-response";
+import { requireRouteUser } from "@/lib/auth";
+import {
+  DEFAULT_OPENAI_MODEL,
+  getModelCatalog,
+  validateModelId
+} from "@/lib/openai-models";
 import { getRuntimeGraphSummary } from "@/lib/runtime-store";
 
 const graphAnalysisSchema = z.object({
   apiKey: z.string().optional(),
-  model: z.string().min(1).default("gpt-4.1-mini"),
+  model: z.string().min(1).default(DEFAULT_OPENAI_MODEL),
+  projectId: z.string().optional(),
   prompt: z.string().min(1).max(4000)
 });
 
@@ -21,6 +28,7 @@ type OpenAIResponse = {
 
 export async function POST(request: NextRequest) {
   try {
+    const user = await requireRouteUser(request);
     const body = graphAnalysisSchema.parse(await request.json());
     const apiKey = body.apiKey?.trim() || process.env.OPENAI_API_KEY;
 
@@ -32,7 +40,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const summary = await getRuntimeGraphSummary();
+    const catalog = await getModelCatalog(apiKey);
+    if (!validateModelId(body.model, catalog)) {
+      return fail(
+        "unsupported_model",
+        "Choose a GPT-5 family model available to this key.",
+        422,
+        { model: body.model, available_models: catalog.map((entry) => entry.id) }
+      );
+    }
+
+    const summary = await getRuntimeGraphSummary(user.id, body.projectId);
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
@@ -45,7 +63,7 @@ export async function POST(request: NextRequest) {
           {
             role: "system",
             content:
-              "You analyze Sembl semantic graph state. Return actionable, concise graph observations with risks and next moves. Do not request secrets."
+              "You analyze Sembl v4.3 semantic graph state. Treat the graph as canonical state, specs as first-class source intent, and execution artifacts as derived. Return concise risks, affected graph scope, and next moves. Do not request or reveal secrets."
           },
           {
             role: "user",
@@ -88,6 +106,9 @@ export async function POST(request: NextRequest) {
       return fail("invalid_request", "Graph analysis request is invalid.", 422, {
         issues: error.issues
       });
+    }
+    if (error instanceof Error && error.message === "unauthorized") {
+      return fail("unauthorized", "Sign in to run AI graph analysis.", 401);
     }
 
     return fail(

@@ -1,7 +1,6 @@
 import type { NextRequest } from "next/server";
 import { fail, ok } from "@/lib/api-response";
 import { requireRouteUser } from "@/lib/auth";
-import { PROJECT_ID } from "@/lib/semantic-store";
 import { getRuntimeExecution } from "@/lib/runtime-store";
 
 export async function GET(
@@ -9,14 +8,10 @@ export async function GET(
   { params }: { params: Promise<{ projectId: string; runId: string }> }
 ) {
   try {
-    await requireRouteUser(request);
+    const user = await requireRouteUser(request);
     const { projectId, runId } = await params;
 
-    if (projectId !== PROJECT_ID) {
-      return fail("not_found", "Execution is not visible.", 404);
-    }
-
-    const execution = await getRuntimeExecution(runId);
+    const execution = await getRuntimeExecution(user.id, projectId, runId);
     if (!execution) {
       return fail("not_found", "Execution does not exist.", 404);
     }

@@ -4,115 +4,113 @@ import {
   Activity,
   AlertTriangle,
   ArrowRight,
-  Box,
-  Braces,
   Check,
   CircleDot,
-  Clock,
   Code2,
   GitBranch,
   GitCommitHorizontal,
   KeyRound,
   Layers3,
+  Loader2,
+  LogOut,
   Network,
   Play,
+  RefreshCw,
   Rocket,
+  Save,
   ScrollText,
   Search,
   ShieldCheck,
   SlidersHorizontal,
-  SquareArrowOutUpRight,
+  Sparkles,
   Timer,
   Workflow,
   X
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import {
+  Background,
+  Controls,
+  MiniMap,
+  ReactFlow,
+  type Edge as FlowEdge,
+  type Node as FlowNode
+} from "@xyflow/react";
+import { useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
+import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import type {
   Approval,
-  GraphEdge,
+  ExecutionRun,
+  ExecutionTask,
   GraphNode,
-  ReconciliationAttempt
+  ModelCatalogEntry,
+  RuntimeHomeData,
+  SpecificationDraft
 } from "@/lib/types";
 
-type ProjectSnapshot = ReturnType<
-  typeof import("@/lib/semantic-store").getProjectSnapshot
->;
-
-type GraphPayload = ReturnType<typeof import("@/lib/semantic-store").getGraph>;
-
-type TaskPayload = ReturnType<
-  typeof import("@/lib/semantic-store").getDeterministicDag
->[number];
-
 type Props = {
-  snapshot: ProjectSnapshot;
-  graph: GraphPayload;
-  approvals: Approval[];
-  tasks: TaskPayload[];
-  reconciliations: ReconciliationAttempt[];
+  initialData: RuntimeHomeData;
 };
 
-type AnalysisState =
-  | { status: "idle"; text: string }
-  | { status: "running"; text: string }
-  | { status: "done"; text: string }
-  | { status: "error"; text: string };
+type View =
+  | "Specs"
+  | "Graph"
+  | "Validation"
+  | "Execution"
+  | "Reconciliation"
+  | "Deployments"
+  | "Settings";
 
-const navIcons = [
-  Layers3,
-  ShieldCheck,
-  Activity,
-  SlidersHorizontal,
-  Box,
-  ScrollText,
-  Play,
-  GitCommitHorizontal,
-  Rocket,
-  Network
-];
-
-const screenIconByName: Record<string, typeof Layers3> = {
-  "Workspace Home": Layers3,
-  "Approval Center": ShieldCheck,
-  "Activity Center": Activity,
-  "Workspace Settings": SlidersHorizontal,
-  "Project Overview": Box,
-  Specifications: ScrollText,
-  Execution: Play,
-  Changes: GitCommitHorizontal,
-  Deployments: Rocket,
-  "Repository Ingestion": Network,
-  "Approval Review": ShieldCheck,
-  "Conflict Resolution": AlertTriangle,
-  "Escalation Center": Timer
+type RequestState = {
+  status: "idle" | "loading" | "success" | "error";
+  message: string;
 };
 
-const lifecycle = [
-  "Documentation",
-  "Validation",
-  "Graph",
-  "Approval",
-  "Execution",
-  "Reconciliation",
-  "Deploy"
+type ApiEnvelope<T> = { data: T; meta: Record<string, unknown> | null };
+type ApiError = { error: { code: string; message: string } };
+
+const views: Array<{ id: View; icon: typeof Layers3 }> = [
+  { id: "Specs", icon: ScrollText },
+  { id: "Graph", icon: Network },
+  { id: "Validation", icon: ShieldCheck },
+  { id: "Execution", icon: Play },
+  { id: "Reconciliation", icon: GitCommitHorizontal },
+  { id: "Deployments", icon: Rocket },
+  { id: "Settings", icon: SlidersHorizontal }
 ];
 
 const statusTone: Record<string, string> = {
   active: "healthy",
+  approved: "healthy",
   completed: "healthy",
+  committed: "healthy",
+  healthy: "healthy",
   passed: "healthy",
-  approval_required: "awaiting",
+  passed_with_warnings: "attention",
+  ready_for_execution: "healthy",
   awaiting_approval: "awaiting",
+  under_review: "awaiting",
   pending: "awaiting",
+  queued: "awaiting",
   running: "informational",
   executing: "informational",
   reconciling: "informational",
+  deploying: "informational",
   warning: "attention",
-  blocked: "blocked",
   failed: "blocked",
+  rejected: "blocked",
   escalated: "escalated",
-  draft: "muted"
+  draft: "muted",
+  not_deployed: "muted"
+};
+
+const nodeColors: Record<string, string> = {
+  entity: "#8fd6ff",
+  interface: "#9db8ff",
+  integration_contract: "#c4b5fd",
+  flow: "#86efac",
+  invariant: "#facc15",
+  execution_boundary: "#f0abfc"
 };
 
 function StatusPill({
@@ -152,366 +150,802 @@ function SectionHeader({
   );
 }
 
-function GraphCanvas({
-  nodes,
-  edges,
-  selectedNodeId,
-  onSelectNode
+function useApiClient(projectId: string) {
+  const supabase = useMemo(() => createSupabaseBrowserClient(), []);
+
+  async function apiFetch<T>(path: string, init: RequestInit = {}) {
+    const {
+      data: { session }
+    } = await supabase.auth.getSession();
+
+    if (!session) {
+      throw new Error("Session expired. Sign in again.");
+    }
+
+    const response = await fetch(path, {
+      ...init,
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${session.access_token}`,
+        ...(init.headers ?? {})
+      }
+    });
+    const payload = (await response.json()) as ApiEnvelope<T> | ApiError;
+
+    if (!response.ok || "error" in payload) {
+      throw new Error("error" in payload ? payload.error.message : "Request failed.");
+    }
+
+    return payload.data;
+  }
+
+  async function refresh() {
+    return apiFetch<RuntimeHomeData>(`/api/v1/projects/${projectId}/state`);
+  }
+
+  return { apiFetch, refresh, supabase };
+}
+
+function formatSpecLabel(specType: string) {
+  return specType
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function latestRun(data: RuntimeHomeData) {
+  return data.executions[0] ?? null;
+}
+
+function latestPendingApproval(data: RuntimeHomeData) {
+  return data.approvals.find((approval) => approval.status === "pending");
+}
+
+function latestApprovedApproval(data: RuntimeHomeData) {
+  return data.approvals.find((approval) => approval.status === "approved");
+}
+
+function Metric({
+  label,
+  value,
+  detail
 }: {
-  nodes: GraphNode[];
-  edges: GraphEdge[];
-  selectedNodeId: string;
-  onSelectNode: (nodeId: string) => void;
+  label: string;
+  value: string | number;
+  detail?: string;
 }) {
-  const visibleNodes = nodes.slice(0, 18);
-  const nodePositions = visibleNodes.map((node, index) => {
-    const column = index % 3;
-    const row = Math.floor(index / 3);
-    return {
-      node,
-      x: 58 + column * 178 + (row % 2) * 28,
-      y: 42 + row * 74
-    };
-  });
-  const positionById = new Map(
-    nodePositions.map((position) => [position.node.id, position])
-  );
-  const visibleEdges = edges
-    .filter(
-      (edge) => positionById.has(edge.source_node_id) && positionById.has(edge.target_node_id)
-    )
-    .slice(0, 24);
-
   return (
-    <div className="graph-canvas" role="img" aria-label="Read-only semantic graph">
-      <svg viewBox="0 0 610 510" className="graph-svg" aria-hidden="true">
-        {visibleEdges.map((edge) => {
-          const source = positionById.get(edge.source_node_id);
-          const target = positionById.get(edge.target_node_id);
-          if (!source || !target) {
-            return null;
-          }
-
-          const selected =
-            edge.source_node_id === selectedNodeId || edge.target_node_id === selectedNodeId;
-
-          return (
-            <line
-              key={edge.id}
-              x1={source.x + 56}
-              y1={source.y + 22}
-              x2={target.x + 56}
-              y2={target.y + 22}
-              className={clsx("graph-edge", selected && "graph-edge-selected")}
-            />
-          );
-        })}
-      </svg>
-      {nodePositions.map(({ node, x, y }) => (
-        <button
-          type="button"
-          key={node.id}
-          className={clsx(
-            "graph-node",
-            `graph-node-${node.node_type}`,
-            node.id === selectedNodeId && "graph-node-active"
-          )}
-          style={{ left: `${x}px`, top: `${y}px` }}
-          onClick={() => onSelectNode(node.id)}
-          title={`${node.node_type}: ${node.name}`}
-        >
-          <span>{node.name}</span>
-          <small>{node.node_type}</small>
-        </button>
-      ))}
+    <div className="metric-tile">
+      <span>{label}</span>
+      <strong>{value}</strong>
+      {detail ? <small>{detail}</small> : null}
     </div>
   );
 }
 
-function SpecPanel({ snapshot }: { snapshot: ProjectSnapshot }) {
-  const visibleScreens = snapshot.screens.slice(0, 5);
-
-  return (
-    <section className="panel spec-panel">
-      <SectionHeader
-        title="Specification State"
-        eyebrow="Documentation Mode"
-        action={<StatusPill label={snapshot.validation.status} icon={ShieldCheck} />}
-      />
-      <div className="spec-summary">
-        <div>
-          <p className="metric-label">Canonical source</p>
-          <strong>V4.3 graph artifacts</strong>
-          <span>Specifications feed graph extraction, execution, and reconciliation.</span>
-        </div>
-        <div>
-          <p className="metric-label">Active branch</p>
-          <strong>{snapshot.branch.name}</strong>
-          <span>Branch execution is isolated until reconciliation completes.</span>
-        </div>
-      </div>
-      <div className="screen-list">
-        {visibleScreens.map((screen) => (
-          <article key={screen.id} className="screen-row">
-            <div className="screen-index">{screen.id.split(".").at(-1)?.slice(0, 2)}</div>
-            <div>
-              <h3>{screen.name}</h3>
-              <p>{screen.purpose}</p>
-            </div>
-          </article>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function ExecutionPanel({ tasks }: { tasks: TaskPayload[] }) {
-  return (
-    <section className="panel execution-panel">
-      <SectionHeader
-        title="Execution DAG"
-        eyebrow="Graph-scoped workers"
-        action={<StatusPill label="approval_required" icon={Clock} />}
-      />
-      <div className="timeline">
-        {tasks.slice(0, 8).map((task, index) => (
-          <article key={task.id} className="timeline-row">
-            <div className={clsx("timeline-dot", index < 6 && "timeline-dot-complete")}>
-              {index < 6 ? <Check size={13} /> : <Timer size={13} />}
-            </div>
-            <div>
-              <div className="timeline-title">
-                <h3>{task.name}</h3>
-                <span>{task.agent}</span>
-              </div>
-              <p>
-                {task.dependencies.length
-                  ? `Depends on ${task.dependencies.join(", ")}`
-                  : "Root task"}
-              </p>
-            </div>
-          </article>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function ValidationPanel({ snapshot }: { snapshot: ProjectSnapshot }) {
-  return (
-    <section className="panel validation-panel">
-      <SectionHeader
-        title="Validation"
-        eyebrow="Multi-pass gate"
-        action={<span className="mono">{snapshot.validation.passes.length} passes</span>}
-      />
-      <div className="validation-grid">
-        {snapshot.validation.passes.map((pass) => (
-          <div key={pass.name} className="validation-pass">
-            <StatusPill label={pass.status} icon={Check} />
-            <strong>{pass.name.replaceAll("_", " ")}</strong>
-            <span>{pass.violations.length} violations</span>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function AiGraphPanel({
-  selectedNode
+function SpecsView({
+  data,
+  selectedSpec,
+  editorContent,
+  requestState,
+  onSelectSpec,
+  onEditorChange,
+  onSaveDraft,
+  onPublish,
+  onCompileGraph
 }: {
-  selectedNode: GraphNode;
+  data: RuntimeHomeData;
+  selectedSpec: SpecificationDraft;
+  editorContent: string;
+  requestState: RequestState;
+  onSelectSpec: (spec: SpecificationDraft) => void;
+  onEditorChange: (value: string) => void;
+  onSaveDraft: () => void;
+  onPublish: () => void;
+  onCompileGraph: () => void;
 }) {
-  const [apiKey, setApiKey] = useState("");
-  const [model, setModel] = useState("gpt-4.1-mini");
-  const [analysis, setAnalysis] = useState<AnalysisState>({
+  return (
+    <section className="view-grid specs-view">
+      <div className="panel spec-list-panel">
+        <SectionHeader
+          title="Specifications"
+          eyebrow="First-class source"
+          action={<StatusPill label={`${data.snapshot.counts.dirty_specs} dirty`} />}
+        />
+        <div className="spec-list">
+          {data.specs.map((spec) => (
+            <button
+              key={spec.id}
+              type="button"
+              className={clsx("spec-row", selectedSpec.id === spec.id && "active")}
+              onClick={() => onSelectSpec(spec)}
+            >
+              <span>{formatSpecLabel(spec.spec_type)}</span>
+              <small>
+                rev {spec.active_revision_number ?? 0}
+                {spec.is_dirty ? " · draft changed" : ""}
+              </small>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="panel editor-panel">
+        <SectionHeader
+          title={formatSpecLabel(selectedSpec.spec_type)}
+          eyebrow="Draft and publish"
+          action={
+            <div className="button-row">
+              <button type="button" className="secondary-action" onClick={onSaveDraft}>
+                <Save size={16} />
+                Save draft
+              </button>
+              <button type="button" className="primary-action" onClick={onPublish}>
+                <Check size={16} />
+                Publish
+              </button>
+            </div>
+          }
+        />
+        <textarea
+          className="spec-editor"
+          value={editorContent}
+          onChange={(event) => onEditorChange(event.target.value)}
+          spellCheck={false}
+        />
+        <div className="editor-footer">
+          <p className={clsx("request-message", `request-${requestState.status}`)}>
+            {requestState.status === "loading" ? <Loader2 size={14} /> : null}
+            {requestState.message}
+          </p>
+          <button type="button" className="secondary-action" onClick={onCompileGraph}>
+            <Workflow size={16} />
+            Compile graph
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function GraphView({
+  data,
+  selectedNode,
+  onSelectNode,
+  apiKey,
+  model,
+  models,
+  analysis,
+  onApiKeyChange,
+  onModelChange,
+  onRefreshModels,
+  onAnalyze
+}: {
+  data: RuntimeHomeData;
+  selectedNode: GraphNode;
+  onSelectNode: (node: GraphNode) => void;
+  apiKey: string;
+  model: string;
+  models: ModelCatalogEntry[];
+  analysis: RequestState & { output?: string };
+  onApiKeyChange: (value: string) => void;
+  onModelChange: (value: string) => void;
+  onRefreshModels: () => void;
+  onAnalyze: () => void;
+}) {
+  const flowNodes = useMemo<FlowNode[]>(
+    () =>
+      data.graph.nodes.map((node, index) => {
+        const column = index % 6;
+        const row = Math.floor(index / 6);
+        return {
+          id: node.id,
+          position: {
+            x: column * 210 + (row % 2) * 40,
+            y: row * 118
+          },
+          data: {
+            label: `${node.name}\n${node.node_type}`
+          },
+          style: {
+            border: `1px solid ${nodeColors[node.node_type] ?? "#9ca3af"}`,
+            background: node.id === selectedNode.id ? "#ecf5ff" : "#ffffff",
+            color: "#0f172a",
+            borderRadius: 8,
+            fontSize: 12,
+            width: 170,
+            minHeight: 58,
+            boxShadow:
+              node.id === selectedNode.id
+                ? "0 0 0 3px rgba(37, 99, 235, 0.16)"
+                : "0 10px 24px rgba(15, 23, 42, 0.08)",
+            whiteSpace: "pre-line"
+          }
+        };
+      }),
+    [data.graph.nodes, selectedNode.id]
+  );
+  const flowEdges = useMemo<FlowEdge[]>(
+    () =>
+      data.graph.edges.map((edge) => ({
+        id: edge.id,
+        source: edge.source_node_id,
+        target: edge.target_node_id,
+        label: edge.edge_type,
+        animated:
+          edge.source_node_id === selectedNode.id || edge.target_node_id === selectedNode.id,
+        style: {
+          stroke:
+            edge.source_node_id === selectedNode.id || edge.target_node_id === selectedNode.id
+              ? "#2563eb"
+              : "#94a3b8"
+        }
+      })),
+    [data.graph.edges, selectedNode.id]
+  );
+
+  return (
+    <section className="view-grid graph-view">
+      <div className="panel graph-panel">
+        <SectionHeader
+          title="Graph Explorer"
+          eyebrow={`Version ${data.graph.version_number}`}
+          action={<span className="mono">{data.graph.nodes.length} nodes</span>}
+        />
+        <div className="flow-shell">
+          <ReactFlow
+            nodes={flowNodes}
+            edges={flowEdges}
+            fitView
+            minZoom={0.25}
+            maxZoom={1.6}
+            onNodeClick={(_, node) => {
+              const match = data.graph.nodes.find((item) => item.id === node.id);
+              if (match) onSelectNode(match);
+            }}
+          >
+            <Background gap={20} color="#dbe4f0" />
+            <Controls />
+            <MiniMap pannable zoomable nodeStrokeWidth={3} />
+          </ReactFlow>
+        </div>
+      </div>
+
+      <aside className="side-stack">
+        <section className="panel node-panel">
+          <SectionHeader title="Node Inspector" eyebrow="Read-only canonical graph" />
+          <h3>{selectedNode.name}</h3>
+          <StatusPill label={selectedNode.node_type} icon={Code2} />
+          <pre>{JSON.stringify(selectedNode.payload, null, 2)}</pre>
+        </section>
+
+        <section className="panel ai-panel">
+          <SectionHeader title="AI Graph Analysis" eyebrow="GPT-5 family" />
+          <label className="field">
+            <span>OpenAI API key</span>
+            <input
+              type="password"
+              value={apiKey}
+              onChange={(event) => onApiKeyChange(event.target.value)}
+              placeholder="Key is used for this request only"
+              autoComplete="off"
+            />
+          </label>
+          <label className="field">
+            <span>Model</span>
+            <select value={model} onChange={(event) => onModelChange(event.target.value)}>
+              {models.map((entry) => (
+                <option key={entry.id} value={entry.id}>
+                  {entry.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="button-row">
+            <button type="button" className="secondary-action" onClick={onRefreshModels}>
+              <RefreshCw size={16} />
+              Refresh models
+            </button>
+            <button type="button" className="primary-action" onClick={onAnalyze}>
+              <Sparkles size={16} />
+              Analyze
+            </button>
+          </div>
+          <div className={clsx("analysis-output", `request-${analysis.status}`)}>
+            {analysis.status === "loading" ? "Analyzing graph state..." : analysis.output ?? analysis.message}
+          </div>
+        </section>
+      </aside>
+    </section>
+  );
+}
+
+function ValidationView({ data }: { data: RuntimeHomeData }) {
+  return (
+    <section className="view-grid two-column">
+      <div className="panel">
+        <SectionHeader title="Validation Runs" eyebrow="Three-pass gates" />
+        <div className="table-list">
+          {data.validationGroups.map((group) => (
+            <article key={group.id} className="table-row">
+              <div>
+                <strong>{group.target_type.replaceAll("_", " ")}</strong>
+                <span>{group.id}</span>
+              </div>
+              <StatusPill label={group.status} icon={ShieldCheck} />
+              <small>{group.runs.length} passes</small>
+            </article>
+          ))}
+        </div>
+      </div>
+      <div className="panel">
+        <SectionHeader title="Latest Pass Detail" eyebrow="Deterministic validation" />
+        <div className="validation-grid">
+          {(data.validationGroups[0]?.runs ?? []).map((run) => (
+            <div key={run.id} className="validation-pass">
+              <StatusPill label={run.status} icon={Check} />
+              <strong>Pass {run.pass_number}</strong>
+              <span>{run.completed_at ? "completed" : "running"}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ExecutionView({
+  data,
+  requestState,
+  onApprove,
+  onReject,
+  onStartExecution,
+  onAdvance,
+  onRetry
+}: {
+  data: RuntimeHomeData;
+  requestState: RequestState;
+  onApprove: (approval: Approval) => void;
+  onReject: (approval: Approval) => void;
+  onStartExecution: (approval: Approval) => void;
+  onAdvance: (run: ExecutionRun) => void;
+  onRetry: (run: ExecutionRun) => void;
+}) {
+  const pendingApproval = latestPendingApproval(data);
+  const approvedApproval = latestApprovedApproval(data);
+  const run = latestRun(data);
+
+  return (
+    <section className="view-grid two-column">
+      <div className="panel">
+        <SectionHeader
+          title="Approvals"
+          eyebrow="Execution authority"
+          action={pendingApproval ? <StatusPill label={pendingApproval.status} /> : null}
+        />
+        <div className="approval-card">
+          {pendingApproval ? (
+            <>
+              <p>{String(pendingApproval.mutation_summary.summary)}</p>
+              <div className="button-row">
+                <button type="button" className="primary-action" onClick={() => onApprove(pendingApproval)}>
+                  <Check size={16} />
+                  Approve
+                </button>
+                <button type="button" className="secondary-action" onClick={() => onReject(pendingApproval)}>
+                  <X size={16} />
+                  Reject
+                </button>
+              </div>
+            </>
+          ) : (
+            <p>No pending approval. Compile the graph from Specs to request one.</p>
+          )}
+        </div>
+        <div className="button-row">
+          <button
+            type="button"
+            className="primary-action"
+            disabled={!approvedApproval}
+            onClick={() => approvedApproval && onStartExecution(approvedApproval)}
+          >
+            <Play size={16} />
+            Start execution
+          </button>
+          {run ? (
+            <button type="button" className="secondary-action" onClick={() => onRetry(run)}>
+              <RefreshCw size={16} />
+              Retry latest
+            </button>
+          ) : null}
+        </div>
+        <p className={clsx("request-message", `request-${requestState.status}`)}>
+          {requestState.message}
+        </p>
+      </div>
+
+      <div className="panel">
+        <SectionHeader
+          title="Execution DAG"
+          eyebrow={run ? `Run ${run.id.slice(0, 8)}` : "No run yet"}
+          action={run ? <StatusPill label={run.status} /> : null}
+        />
+        <div className="timeline">
+          {data.tasks.map((task) => (
+            <article key={task.id} className="timeline-row">
+              <div className={clsx("timeline-dot", task.status === "completed" && "timeline-dot-complete")}>
+                {task.status === "completed" ? <Check size={13} /> : <Timer size={13} />}
+              </div>
+              <div>
+                <div className="timeline-title">
+                  <h3>{String(task.output_payload.name ?? `Task ${task.sequence_number}`)}</h3>
+                  <StatusPill label={task.status} />
+                </div>
+                <p>{String(task.output_payload.agent ?? "Sembl Orchestrator")}</p>
+              </div>
+            </article>
+          ))}
+        </div>
+        {run && run.status !== "completed" ? (
+          <button type="button" className="primary-action full-width" onClick={() => onAdvance(run)}>
+            <ArrowRight size={16} />
+            Advance next task
+          </button>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function ReconciliationView({ data }: { data: RuntimeHomeData }) {
+  return (
+    <section className="view-grid two-column">
+      <div className="panel">
+        <SectionHeader title="Reconciliation" eyebrow="Graph authority preserved" />
+        <div className="table-list">
+          {data.reconciliations.map((item) => (
+            <article key={item.id} className="table-row">
+              <div>
+                <strong>{item.id}</strong>
+                <span>{item.semantic_diff_id ?? "No semantic diff yet"}</span>
+              </div>
+              <StatusPill label={item.status} icon={GitBranch} />
+            </article>
+          ))}
+        </div>
+      </div>
+      <div className="panel">
+        <SectionHeader title="Event Log" eyebrow="Append-only lineage" />
+        <div className="table-list">
+          {data.events.map((event) => (
+            <article key={event.id} className="table-row">
+              <div>
+                <strong>#{event.sequence_number} {event.event_type}</strong>
+                <span>{event.originating_subsystem}</span>
+              </div>
+              <small>{new Date(event.created_at).toLocaleString()}</small>
+            </article>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function DeploymentsView({ data }: { data: RuntimeHomeData }) {
+  return (
+    <section className="view-grid two-column">
+      <div className="panel">
+        <SectionHeader title="Deployments" eyebrow="Derived artifacts" />
+        <div className="table-list">
+          {data.deployments.map((deployment) => (
+            <article key={deployment.id} className="table-row">
+              <div>
+                <strong>{deployment.environment}</strong>
+                <span>{deployment.provider_url ?? "No provider URL"}</span>
+              </div>
+              <StatusPill label={deployment.status} icon={Rocket} />
+            </article>
+          ))}
+        </div>
+      </div>
+      <div className="panel">
+        <SectionHeader title="Notifications" eyebrow="Workspace activity" />
+        <div className="table-list">
+          {data.notifications.map((notification) => (
+            <article key={notification.id} className="table-row">
+              <div>
+                <strong>{notification.title}</strong>
+                <span>{notification.body}</span>
+              </div>
+              <StatusPill label={notification.severity} />
+            </article>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function SettingsView({
+  data,
+  onSignOut
+}: {
+  data: RuntimeHomeData;
+  onSignOut: () => void;
+}) {
+  return (
+    <section className="view-grid two-column">
+      <div className="panel">
+        <SectionHeader title="Workspace Settings" eyebrow="Authenticated session" />
+        <dl className="settings-list">
+          <div>
+            <dt>User</dt>
+            <dd>{data.snapshot.currentUser.email ?? data.snapshot.currentUser.id}</dd>
+          </div>
+          <div>
+            <dt>Role</dt>
+            <dd>{data.snapshot.currentUser.role}</dd>
+          </div>
+          <div>
+            <dt>Runtime source</dt>
+            <dd>{data.snapshot.runtimeSource}</dd>
+          </div>
+        </dl>
+        <button type="button" className="secondary-action" onClick={onSignOut}>
+          <LogOut size={16} />
+          Sign out
+        </button>
+      </div>
+      <div className="panel">
+        <SectionHeader title="Backend Health" eyebrow="Truthful state" />
+        <div className="metric-grid">
+          <Metric label="Specs" value={data.snapshot.counts.specifications} />
+          <Metric label="Nodes" value={data.snapshot.counts.nodes} />
+          <Metric label="Edges" value={data.snapshot.counts.edges} />
+          <Metric label="Runs" value={data.snapshot.counts.runs} />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+export function SemblWorkspace({ initialData }: Props) {
+  const [data, setData] = useState(initialData);
+  const [view, setView] = useState<View>("Specs");
+  const [selectedSpecId, setSelectedSpecId] = useState(initialData.specs[0]?.id ?? "");
+  const [editorContent, setEditorContent] = useState(initialData.specs[0]?.draft_content ?? "");
+  const [selectedNodeId, setSelectedNodeId] = useState(initialData.graph.nodes[0]?.id ?? "");
+  const [requestState, setRequestState] = useState<RequestState>({
     status: "idle",
-    text: "Enter an API key, then run a graph analysis on the selected semantic node."
+    message: "Ready."
   });
-
-  async function runAnalysis() {
-    if (!apiKey.trim()) {
-      setAnalysis({
-        status: "error",
-        text: "Enter an OpenAI API key to run AI graph analysis."
-      });
-      return;
+  const [apiKey, setApiKey] = useState("");
+  const [model, setModel] = useState("gpt-5.5");
+  const [models, setModels] = useState<ModelCatalogEntry[]>([
+    {
+      id: "gpt-5.5",
+      label: "GPT-5.5",
+      family: "gpt-5",
+      recommended: true,
+      description: "Default GPT-5.5 model.",
+      source: "configured"
     }
+  ]);
+  const [analysis, setAnalysis] = useState<RequestState & { output?: string }>({
+    status: "idle",
+    message: "Enter a key to analyze the selected graph node."
+  });
+  const { apiFetch, refresh, supabase } = useApiClient(data.snapshot.project.id);
 
-    setAnalysis({ status: "running", text: "Analyzing graph state..." });
+  const selectedSpec =
+    data.specs.find((spec) => spec.id === selectedSpecId) ?? data.specs[0];
+  const selectedNode =
+    data.graph.nodes.find((node) => node.id === selectedNodeId) ?? data.graph.nodes[0];
 
+  useEffect(() => {
+    void loadModels();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function refreshState(message = "Workspace refreshed.") {
+    const next = await refresh();
+    const nextSelectedSpec =
+      next.specs.find((spec) => spec.id === selectedSpecId) ?? next.specs[0];
+    setData(next);
+    if (nextSelectedSpec) {
+      setSelectedSpecId(nextSelectedSpec.id);
+      setEditorContent(nextSelectedSpec.draft_content);
+    }
+    setRequestState({ status: "success", message });
+    return next;
+  }
+
+  async function runAction(message: string, action: () => Promise<void>) {
+    setRequestState({ status: "loading", message });
     try {
-      const response = await fetch("/api/v1/ai/graph-analysis", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json"
-        },
-        body: JSON.stringify({
-          apiKey,
-          model,
-          prompt: `Analyze selected node ${selectedNode.id} (${selectedNode.name}) for architectural continuity risk, affected scope, and next actions.`
-        })
+      await action();
+    } catch (error) {
+      setRequestState({
+        status: "error",
+        message: error instanceof Error ? error.message : "Action failed."
       });
-      const payload = (await response.json()) as
-        | { data: { output: string } }
-        | { error: { message: string } };
+    }
+  }
 
-      if (!response.ok || "error" in payload) {
-        setAnalysis({
-          status: "error",
-          text: "error" in payload ? payload.error.message : "Graph analysis failed."
-        });
-        return;
-      }
-
-      setAnalysis({ status: "done", text: payload.data.output });
+  async function loadModels() {
+    try {
+      const payload = await apiFetch<{
+        default_model: string;
+        models: ModelCatalogEntry[];
+      }>("/api/v1/ai/models", {
+        headers: apiKey.trim() ? { "x-openai-api-key": apiKey.trim() } : undefined
+      });
+      setModels(payload.models);
+      setModel(payload.default_model);
     } catch (error) {
       setAnalysis({
         status: "error",
-        text: error instanceof Error ? error.message : "Graph analysis failed."
+        message: error instanceof Error ? error.message : "Could not load model catalog."
       });
     }
   }
 
-  return (
-    <section className="impact-module ai-module">
-      <div className="module-title">
-        <KeyRound size={16} />
-        <h3>AI Graph Key</h3>
-      </div>
-      <label className="field">
-        <span>OpenAI API key</span>
-        <input
-          type="password"
-          placeholder="Enter OpenAI API key"
-          value={apiKey}
-          onChange={(event) => setApiKey(event.target.value)}
-          autoComplete="off"
-        />
-      </label>
-      <label className="field">
-        <span>Model</span>
-        <select value={model} onChange={(event) => setModel(event.target.value)}>
-          <option value="gpt-4.1-mini">gpt-4.1-mini</option>
-          <option value="gpt-4.1">gpt-4.1</option>
-          <option value="gpt-4o-mini">gpt-4o-mini</option>
-        </select>
-      </label>
-      <button className="primary-action" type="button" onClick={runAnalysis}>
-        <Workflow size={16} />
-        Analyze Graph
-      </button>
-      <div className={clsx("analysis-output", `analysis-${analysis.status}`)}>
-        {analysis.text}
-      </div>
-    </section>
-  );
-}
+  function selectSpec(spec: SpecificationDraft) {
+    setSelectedSpecId(spec.id);
+    setEditorContent(spec.draft_content);
+  }
 
-function ImpactPanel({
-  approval,
-  selectedNode,
-  reconciliations
-}: {
-  approval: Approval;
-  selectedNode: GraphNode;
-  reconciliations: ReconciliationAttempt[];
-}) {
-  const [decision, setDecision] = useState(approval.status);
+  async function saveDraft() {
+    if (!selectedSpec) return;
+    await runAction("Saving draft to Supabase...", async () => {
+      await apiFetch(`/api/v1/projects/${data.snapshot.project.id}/specifications/${selectedSpec.spec_type}/draft`, {
+        method: "PUT",
+        body: JSON.stringify({ content: editorContent })
+      });
+      await refreshState("Draft saved.");
+    });
+  }
 
-  async function decide(path: "approve" | "reject") {
-    const response = await fetch(
-      `/api/v1/projects/${approval.project_id}/approvals/${approval.id}/${path}`,
-      {
-        method: "POST"
-      }
-    );
-    const payload = (await response.json()) as { data?: Approval };
-    if (payload.data) {
-      setDecision(payload.data.status);
+  async function publish() {
+    if (!selectedSpec) return;
+    await runAction("Publishing revision and running validation...", async () => {
+      await apiFetch(`/api/v1/projects/${data.snapshot.project.id}/specifications/${selectedSpec.spec_type}/publish`, {
+        method: "POST",
+        body: JSON.stringify({ content: editorContent })
+      });
+      await refreshState("Revision published and validation recorded.");
+    });
+  }
+
+  async function compileGraph() {
+    await runAction("Compiling graph from active specs...", async () => {
+      await apiFetch(`/api/v1/projects/${data.snapshot.project.id}/graph/versions`, {
+        method: "POST",
+        body: JSON.stringify({})
+      });
+      await refreshState("Graph version compiled and approval requested.");
+      setView("Execution");
+    });
+  }
+
+  async function decideApproval(approval: Approval, path: "approve" | "reject") {
+    await runAction(`${path === "approve" ? "Approving" : "Rejecting"} execution request...`, async () => {
+      await apiFetch(`/api/v1/projects/${data.snapshot.project.id}/approvals/${approval.id}/${path}`, {
+        method: "POST",
+        body: JSON.stringify({})
+      });
+      await refreshState(`Approval ${path === "approve" ? "approved" : "rejected"}.`);
+    });
+  }
+
+  async function startExecution(approval: Approval) {
+    await runAction("Starting execution and creating task DAG...", async () => {
+      await apiFetch(`/api/v1/projects/${data.snapshot.project.id}/executions`, {
+        method: "POST",
+        body: JSON.stringify({ approval_id: approval.id })
+      });
+      await refreshState("Execution run created.");
+    });
+  }
+
+  async function advance(run: ExecutionRun) {
+    await runAction("Advancing execution task...", async () => {
+      await apiFetch(`/api/v1/projects/${data.snapshot.project.id}/executions/${run.id}/tasks`, {
+        method: "POST",
+        body: JSON.stringify({})
+      });
+      await refreshState("Execution state advanced.");
+    });
+  }
+
+  async function retry(run: ExecutionRun) {
+    await runAction("Creating retry execution run...", async () => {
+      await apiFetch(`/api/v1/projects/${data.snapshot.project.id}/executions/${run.id}/retry`, {
+        method: "POST",
+        body: JSON.stringify({})
+      });
+      await refreshState("Retry run created.");
+    });
+  }
+
+  async function analyzeGraph() {
+    if (!selectedNode) return;
+    if (!apiKey.trim()) {
+      setAnalysis({ status: "error", message: "Enter an OpenAI API key first." });
+      return;
+    }
+
+    setAnalysis({ status: "loading", message: "Analyzing graph state..." });
+    try {
+      const payload = await apiFetch<{ output: string }>("/api/v1/ai/graph-analysis", {
+        method: "POST",
+        body: JSON.stringify({
+          apiKey,
+          model,
+          projectId: data.snapshot.project.id,
+          prompt: `Analyze node ${selectedNode.id} (${selectedNode.name}) for continuity risk, affected scope, and next action.`
+        })
+      });
+      setAnalysis({ status: "success", message: "Analysis complete.", output: payload.output });
+    } catch (error) {
+      setAnalysis({
+        status: "error",
+        message: error instanceof Error ? error.message : "Graph analysis failed."
+      });
     }
   }
 
-  return (
-    <aside className="impact-panel" aria-label="Impact and required actions">
-      <section className="impact-module required-action">
-        <div className="module-title">
-          <AlertTriangle size={16} />
-          <h3>Required Action</h3>
-        </div>
-        <StatusPill label={decision} icon={Clock} />
-        <p>{String(approval.mutation_summary.summary)}</p>
-        <div className="action-row">
-          <button className="primary-action" type="button" onClick={() => decide("approve")}>
-            <Check size={16} />
-            Approve
-          </button>
-          <button className="secondary-action" type="button" onClick={() => decide("reject")}>
-            <X size={16} />
-            Reject
-          </button>
-        </div>
-      </section>
+  async function signOut() {
+    await supabase.auth.signOut();
+    window.location.assign("/");
+  }
 
-      <section className="impact-module">
-        <div className="module-title">
-          <SquareArrowOutUpRight size={16} />
-          <h3>Impact</h3>
-        </div>
-        <div className="impact-score">
-          <span>74</span>
-          <small>impact score</small>
-        </div>
-        <dl className="impact-list">
-          <div>
-            <dt>Scope</dt>
-            <dd>{String(approval.affected_scope.execution_boundary)}</dd>
-          </div>
-          <div>
-            <dt>Selected node</dt>
-            <dd>{selectedNode.name}</dd>
-          </div>
-          <div>
-            <dt>Reconciliation</dt>
-            <dd>{reconciliations[0]?.status.replaceAll("_", " ")}</dd>
-          </div>
-        </dl>
-      </section>
-
-      <AiGraphPanel selectedNode={selectedNode} />
-
-      <section className="impact-module">
-        <div className="module-title">
-          <GitBranch size={16} />
-          <h3>Traceability</h3>
-        </div>
-        <ul className="trace-list">
-          {(selectedNode.source_refs ?? []).slice(0, 4).map((sourceRef) => (
-            <li key={sourceRef}>
-              <Braces size={14} />
-              <span>{sourceRef}</span>
-            </li>
-          ))}
-        </ul>
-      </section>
-    </aside>
-  );
-}
-
-export function SemblWorkspace({
-  snapshot,
-  graph,
-  approvals,
-  tasks,
-  reconciliations
-}: Props) {
-  const [selectedNodeId, setSelectedNodeId] = useState(graph.nodes[0]?.id ?? "");
-  const selectedNode = useMemo(
-    () => graph.nodes.find((node) => node.id === selectedNodeId) ?? graph.nodes[0],
-    [graph.nodes, selectedNodeId]
-  );
-  const approval = approvals[0];
+  const currentView =
+    view === "Specs" && selectedSpec ? (
+      <SpecsView
+        data={data}
+        selectedSpec={selectedSpec}
+        editorContent={editorContent}
+        requestState={requestState}
+        onSelectSpec={selectSpec}
+        onEditorChange={setEditorContent}
+        onSaveDraft={saveDraft}
+        onPublish={publish}
+        onCompileGraph={compileGraph}
+      />
+    ) : view === "Graph" && selectedNode ? (
+      <GraphView
+        data={data}
+        selectedNode={selectedNode}
+        onSelectNode={(node) => setSelectedNodeId(node.id)}
+        apiKey={apiKey}
+        model={model}
+        models={models}
+        analysis={analysis}
+        onApiKeyChange={setApiKey}
+        onModelChange={setModel}
+        onRefreshModels={loadModels}
+        onAnalyze={analyzeGraph}
+      />
+    ) : view === "Validation" ? (
+      <ValidationView data={data} />
+    ) : view === "Execution" ? (
+      <ExecutionView
+        data={data}
+        requestState={requestState}
+        onApprove={(approval) => decideApproval(approval, "approve")}
+        onReject={(approval) => decideApproval(approval, "reject")}
+        onStartExecution={startExecution}
+        onAdvance={advance}
+        onRetry={retry}
+      />
+    ) : view === "Reconciliation" ? (
+      <ReconciliationView data={data} />
+    ) : view === "Deployments" ? (
+      <DeploymentsView data={data} />
+    ) : (
+      <SettingsView data={data} onSignOut={signOut} />
+    );
 
   return (
     <main className="app-shell">
@@ -525,98 +959,84 @@ export function SemblWorkspace({
         </div>
 
         <nav className="nav-stack">
-          {[
-            ...snapshot.navigation.global_navigation,
-            ...snapshot.navigation.project_navigation,
-            ...snapshot.navigation.contextual_navigation
-          ].map((item, index) => {
-            const Icon = screenIconByName[item] ?? navIcons[index % navIcons.length];
-            const active = item === "Project Overview";
+          {views.map((item) => {
+            const Icon = item.icon;
             return (
-              <button key={item} type="button" className={clsx("nav-item", active && "active")}>
+              <button
+                key={item.id}
+                type="button"
+                className={clsx("nav-item", view === item.id && "active")}
+                onClick={() => setView(item.id)}
+              >
                 <Icon size={17} />
-                <span>{item}</span>
+                <span>{item.id}</span>
               </button>
             );
           })}
         </nav>
 
         <div className="nav-footer">
-          <p>Service Preflight</p>
-          <StatusPill label="active" icon={ShieldCheck} />
+          <p>Supabase runtime</p>
+          <StatusPill label={data.snapshot.runtimeSource} icon={ShieldCheck} />
         </div>
       </aside>
 
       <section className="workspace">
         <header className="topbar">
           <div>
-            <p className="section-kicker">{snapshot.workspace.name}</p>
-            <h1>{snapshot.project.name}</h1>
+            <p className="section-kicker">{data.snapshot.workspace.name}</p>
+            <h1>{data.snapshot.project.name}</h1>
           </div>
           <div className="topbar-actions">
             <div className="search-box">
               <Search size={16} />
-              <span>Search specifications, graph nodes, runs</span>
+              <span>Search specs, graph nodes, runs</span>
             </div>
-            <StatusPill label={snapshot.project.lifecycle_state} icon={Clock} />
+            <StatusPill label={data.snapshot.project.lifecycle_state} icon={Activity} />
           </div>
         </header>
 
+        <section className="metric-grid overview-metrics" aria-label="Workspace metrics">
+          <Metric
+            label="Specifications"
+            value={data.snapshot.counts.specifications}
+            detail={`${data.snapshot.counts.dirty_specs} drafts changed`}
+          />
+          <Metric
+            label="Graph"
+            value={`${data.snapshot.counts.nodes}/${data.snapshot.counts.edges}`}
+            detail="nodes / edges"
+          />
+          <Metric
+            label="Approvals"
+            value={data.snapshot.counts.approvals}
+            detail="open requests"
+          />
+          <Metric
+            label="Execution"
+            value={data.snapshot.counts.open_tasks}
+            detail="open tasks"
+          />
+        </section>
+
         <section className="lifecycle-strip" aria-label="Project lifecycle">
-          {lifecycle.map((stage, index) => (
-            <div
-              key={stage}
-              className={clsx(
-                "lifecycle-step",
-                index < 3 && "complete",
-                index === 3 && "current"
-              )}
-            >
-              <span>{index < 3 ? <Check size={13} /> : index === 3 ? <Clock size={13} /> : index + 1}</span>
-              <strong>{stage}</strong>
-              {index < lifecycle.length - 1 ? <ArrowRight size={14} /> : null}
-            </div>
-          ))}
-        </section>
-
-        <section className="workspace-grid">
-          <div className="primary-column">
-            <SpecPanel snapshot={snapshot} />
-            <ExecutionPanel tasks={tasks} />
-            <ValidationPanel snapshot={snapshot} />
-          </div>
-
-          <section className="panel graph-panel">
-            <SectionHeader
-              title="Graph Explorer"
-              eyebrow="Read-only inspection"
-              action={<span className="mono">{graph.nodes.length} nodes</span>}
-            />
-            <GraphCanvas
-              nodes={graph.nodes}
-              edges={graph.edges}
-              selectedNodeId={selectedNode.id}
-              onSelectNode={setSelectedNodeId}
-            />
-            <div className="node-inspector">
-              <div>
-                <p className="metric-label">Selected node</p>
-                <h3>{selectedNode.name}</h3>
-                <StatusPill label={selectedNode.node_type} icon={Code2} />
+          {["Specs", "Graph", "Approval", "Execution", "Reconciliation", "Deploy"].map(
+            (stage) => (
+              <div
+                key={stage}
+                className={clsx("lifecycle-step", view === stage && "current")}
+              >
+                <span>
+                  {stage === "Specs" ? <ScrollText size={13} /> : <CircleDot size={13} />}
+                </span>
+                <strong>{stage}</strong>
               </div>
-              <pre>{JSON.stringify(selectedNode.payload, null, 2)}</pre>
-            </div>
-          </section>
+            )
+          )}
         </section>
-      </section>
 
-      {approval && selectedNode ? (
-        <ImpactPanel
-          approval={approval}
-          selectedNode={selectedNode}
-          reconciliations={reconciliations}
-        />
-      ) : null}
+        {currentView}
+      </section>
     </main>
   );
 }
