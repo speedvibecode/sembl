@@ -331,6 +331,14 @@ function AiGraphPanel({
   });
 
   async function runAnalysis() {
+    if (!apiKey.trim()) {
+      setAnalysis({
+        status: "error",
+        text: "Enter an OpenAI API key to run AI graph analysis."
+      });
+      return;
+    }
+
     setAnalysis({ status: "running", text: "Analyzing graph state..." });
 
     try {
