@@ -10,6 +10,7 @@ import type {
 import {
   APPROVAL_ID,
   BRANCH_ID,
+  decideApproval as decideArtifactApproval,
   getApprovals as getArtifactApprovals,
   getDeterministicDag as getArtifactTasks,
   getExecution as getArtifactExecution,
@@ -60,6 +61,16 @@ type DbTaskRow = {
   failure_reason: string | null;
 };
 
+type DbApprovalRow = {
+  approval_type: Approval["approval_type"];
+  status: Approval["status"];
+  affected_scope: Record<string, unknown>;
+  mutation_summary: Record<string, unknown>;
+  expires_at: Date | string;
+  decided_at: Date | string | null;
+  created_at: Date | string;
+};
+
 const connectionString = process.env.SUPABASE_DB_URL ?? process.env.POSTGRES_URL;
 const globalForPg = globalThis as typeof globalThis & { __semblPgPool?: Pool };
 
@@ -93,6 +104,23 @@ function toTaskStatus(value: unknown): ExecutionTask["status"] {
     value === "skipped"
     ? value
     : "pending";
+}
+
+function mapDbApproval(row: DbApprovalRow): Approval {
+  return {
+    id: APPROVAL_ID,
+    approval_type: row.approval_type,
+    status: row.status,
+    project_id: PROJECT_ID,
+    branch_id: BRANCH_ID,
+    requested_by: "sembl-system",
+    reviewed_by: row.decided_at ? "sembl-system" : null,
+    affected_scope: row.affected_scope ?? {},
+    mutation_summary: row.mutation_summary ?? {},
+    expires_at: toIso(row.expires_at) ?? "",
+    decided_at: toIso(row.decided_at),
+    created_at: toIso(row.created_at) ?? ""
+  };
 }
 
 async function dbOrArtifact<T>(load: (pool: Pool) => Promise<T>, fallback: () => T) {
@@ -319,15 +347,7 @@ export async function getRuntimeSubgraph(nodeId: string, depth = 2) {
 
 export async function getRuntimeApprovals(): Promise<Approval[]> {
   return dbOrArtifact(async (pool) => {
-    const { rows } = await pool.query<{
-      approval_type: Approval["approval_type"];
-      status: Approval["status"];
-      affected_scope: Record<string, unknown>;
-      mutation_summary: Record<string, unknown>;
-      expires_at: Date | string;
-      decided_at: Date | string | null;
-      created_at: Date | string;
-    }>(`
+    const { rows } = await pool.query<DbApprovalRow>(`
       select a.approval_type::text as approval_type, a.status::text as status,
              a.affected_scope, a.mutation_summary, a.expires_at, a.decided_at, a.created_at
       from public.approvals a
@@ -340,21 +360,44 @@ export async function getRuntimeApprovals(): Promise<Approval[]> {
       return getArtifactApprovals();
     }
 
-    return rows.map((row) => ({
-      id: APPROVAL_ID,
-      approval_type: row.approval_type,
-      status: row.status,
-      project_id: PROJECT_ID,
-      branch_id: BRANCH_ID,
-      requested_by: "sembl-system",
-      reviewed_by: null,
-      affected_scope: row.affected_scope ?? {},
-      mutation_summary: row.mutation_summary ?? {},
-      expires_at: toIso(row.expires_at) ?? "",
-      decided_at: toIso(row.decided_at),
-      created_at: toIso(row.created_at) ?? ""
-    }));
+    return rows.map(mapDbApproval);
   }, getArtifactApprovals);
+}
+
+export async function decideRuntimeApproval(
+  approvalId: string,
+  decision: "approved" | "rejected"
+) {
+  if (approvalId !== APPROVAL_ID) {
+    return null;
+  }
+
+  return dbOrArtifact(async (pool) => {
+    const { rows } = await pool.query<DbApprovalRow>(
+      `
+        update public.approvals a
+        set status = $1::public.approval_status,
+            reviewed_by = (
+              select id from auth.users where email = 'system@sembl.local' limit 1
+            ),
+            decided_at = now(),
+            updated_at = now()
+        from public.projects p
+        where p.id = a.project_id
+          and p.slug = 'sembl-core'
+        returning a.approval_type::text as approval_type,
+                  a.status::text as status,
+                  a.affected_scope,
+                  a.mutation_summary,
+                  a.expires_at,
+                  a.decided_at,
+                  a.created_at
+      `,
+      [decision]
+    );
+
+    return rows[0] ? mapDbApproval(rows[0]) : null;
+  }, () => decideArtifactApproval(approvalId, decision));
 }
 
 export async function getRuntimeExecutions(): Promise<ExecutionRun[]> {

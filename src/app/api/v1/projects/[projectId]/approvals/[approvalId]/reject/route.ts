@@ -1,7 +1,8 @@
 import type { NextRequest } from "next/server";
 import { fail, ok } from "@/lib/api-response";
 import { requireAdmin, requireRouteUser } from "@/lib/auth";
-import { decideApproval, PROJECT_ID } from "@/lib/semantic-store";
+import { PROJECT_ID } from "@/lib/semantic-store";
+import { decideRuntimeApproval } from "@/lib/runtime-store";
 
 export async function POST(
   request: NextRequest,
@@ -16,7 +17,7 @@ export async function POST(
       return fail("not_found", "Approval is not visible.", 404);
     }
 
-    const approval = decideApproval(approvalId, "rejected");
+    const approval = await decideRuntimeApproval(approvalId, "rejected");
     if (!approval) {
       return fail("not_found", "Approval does not exist.", 404);
     }
