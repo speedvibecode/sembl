@@ -1,0 +1,10 @@
+{
+  "task_id": "task.08.api_runtime_foundation",
+  "agent": "Interface Steward",
+  "scope": "Next.js API runtime and contract boundary.",
+  "allowed_context": ["api_spec.md", "normalized interfaces", "authorization model"],
+  "forbidden_context": ["direct browser database access", "direct provider access from browser", "graph mutation API outside reconciliation"],
+  "inputs": ["graph/normalized_graph.json", "sembl_docs/api_spec.md", "sembl_docs/techarch.md"],
+  "outputs": ["API routes/modules", "contract tests"],
+  "acceptance": ["All API mutations enforce Supabase Auth.", "Graph API remains read-only.", "Reconciliation is the sole graph mutation gateway."]
+}

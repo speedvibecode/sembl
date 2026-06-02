@@ -1,0 +1,64 @@
+{
+  "schema_version": "sembl.v4_3.release_readiness_report.v1",
+  "generated_at": "2026-06-02T13:10:00.000Z",
+  "status": "ready_for_vercel_deployment_with_supabase_apply_pending",
+  "evidence": {
+    "graph_validation": {
+      "status": "passed",
+      "command": "npm run graph:validate"
+    },
+    "typecheck": {
+      "status": "passed",
+      "command": "npm run typecheck"
+    },
+    "lint": {
+      "status": "passed",
+      "command": "npm run lint"
+    },
+    "production_build": {
+      "status": "passed",
+      "command": "npm run build"
+    },
+    "rendered_e2e": {
+      "status": "passed",
+      "command": "npm run test:e2e",
+      "coverage": [
+        "desktop first meaningful screen",
+        "mobile first meaningful screen",
+        "approval interaction",
+        "AI graph key placeholder error state",
+        "graph node inspection",
+        "graph API response envelope"
+      ]
+    },
+    "supabase_migration": {
+      "status": "created_not_remote_applied",
+      "migration": "supabase/migrations/20260602124708_initial_sembl_v1_runtime.sql",
+      "blocking_reason": "Supabase CLI dry run requires SUPABASE_DB_PASSWORD in this shell. Supabase MCP was added and authenticated, but its SQL tools did not hot-load into the current session."
+    },
+    "supabase_mcp": {
+      "status": "configured_authenticated",
+      "project_ref": "djquuvkwnjpweubzrsnn",
+      "verification": "codex mcp list shows supabase enabled with OAuth"
+    },
+    "agent_skills": {
+      "status": "installed",
+      "skills": ["supabase", "supabase-postgres-best-practices"]
+    },
+    "vercel_build": {
+      "status": "passed",
+      "command": "vercel build --prod"
+    },
+    "browser_verification": {
+      "status": "playwright_fallback_used",
+      "reason": "In-app Browser node runtime failed with Windows sandbox spawn setup refresh before opening a tab."
+    }
+  },
+  "release_notes": [
+    "Next.js app shell implements the canonical 13-screen navigation model.",
+    "Graph Explorer is read-only and derives from graph/normalized_graph.json.",
+    "API routes use the /api/v1 response envelope and keep graph mutation out of the public graph surface.",
+    "Execution start is approval-gated in the route layer.",
+    "AI graph analysis accepts a runtime OpenAI key and does not persist it."
+  ]
+}

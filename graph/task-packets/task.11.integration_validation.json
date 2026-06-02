@@ -1,0 +1,10 @@
+{
+  "task_id": "task.11.integration_validation",
+  "agent": "Integrator",
+  "scope": "Cross-scope integration validation and retry routing.",
+  "allowed_context": ["completed worker outputs", "validation results", "task ownership map", "normalized graph"],
+  "forbidden_context": ["silent fixes outside graph", "reverting unrelated worker edits", "unbounded retry loop"],
+  "inputs": ["worker outputs", "test results", "validation report"],
+  "outputs": ["integration report", "owner-routed failure list", "semantic diff draft"],
+  "acceptance": ["Failures route to the owning task packet.", "No direct graph mutation bypasses reconciliation.", "After three failed attempts, escalation is required."]
+}

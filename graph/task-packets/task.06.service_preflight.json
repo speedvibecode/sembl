@@ -1,0 +1,12 @@
+{
+  "task_id": "task.06.service_preflight",
+  "agent": "Service Steward",
+  "scope": "GitHub, Vercel, and destructive existing Supabase project takeover preflight.",
+  "allowed_context": ["git remote metadata", "Vercel CLI project list/link status", "Supabase MCP project inventory", "destructive reset approval record"],
+  "forbidden_context": ["service_role keys", "OAuth tokens", "raw credentials", "silent database deletion without explicit approval"],
+  "inputs": ["graph/task_graph.json", "provider CLI/MCP status"],
+  "outputs": ["graph/service_preflight.json"],
+  "acceptance": ["GitHub remote reachability is recorded.", "Vercel `sembl` project status is recorded.", "Supabase takeover reset is inventoried, approved, executed, and verified.", "No secrets are committed."],
+  "current_status": "blocked_pending_destructive_supabase_reset",
+  "blocker": "Existing Supabase project takeover is requested but not yet executed. Requires final destructive approval after inventory."
+}

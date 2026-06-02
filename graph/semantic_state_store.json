@@ -1,0 +1,50 @@
+{
+  "schema_version": "sembl.v4_3.semantic_state_store.v1",
+  "current_version_id": "graph_version.v0_docs_seed",
+  "versions": [
+    {
+      "id": "graph_version.v0_docs_seed",
+      "version_number": 0,
+      "parent_version_id": null,
+      "status": "validated_with_service_warning",
+      "created_at": "2026-06-01T00:00:00+05:30",
+      "source_manifest": "graph/docs_manifest.json",
+      "artifacts": {
+        "concept_graph": "graph/concept_graph.json",
+        "ui_graph": "graph/ui_graph.json",
+        "normalized_graph": "graph/normalized_graph.json",
+        "task_graph": "graph/task_graph.json",
+        "agent_roster": "graph/agents/agent_roster.json",
+        "service_preflight": "graph/service_preflight.json",
+        "validation_report": "graph/validation_report.json"
+      },
+      "lineage": {
+        "methodology_authority": "sembl_docs/v_4.3.md",
+        "canonical_peer_policy": "All other docs are canonical peers resolved by domain ownership.",
+        "mutation_gateway": "Future changes must enter through docs/spec mutation or graph reconciliation before implementation."
+      },
+      "readiness": {
+        "graph_ready": true,
+        "task_packets_ready": true,
+        "subagent_deployment_ready": true,
+        "supabase_backed_build_ready": false,
+        "blocking_reason": "Existing Supabase project takeover reset is pending destructive approval and verification."
+      }
+    }
+  ],
+  "next_allowed_mutations": [
+    {
+      "id": "mutation.supabase_takeover_reset",
+      "kind": "service_preflight_mutation",
+      "requires_explicit_destructive_approval": true,
+      "target": "https://djquuvkwnjpweubzrsnn.supabase.co",
+      "effect": "Clear old Sembl app-owned database state and migration history from the existing project, then mark service preflight as verified."
+    },
+    {
+      "id": "mutation.build_from_task_graph",
+      "kind": "implementation_mutation",
+      "requires": ["task.06.service_preflight completed", "Supabase reset verified"],
+      "effect": "Deploy build workers from task.07 onward using scoped task packets."
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "task_id": "task.12_release_readiness",
+  "agent": "Gatekeeper",
+  "scope": "Final release readiness verification.",
+  "allowed_context": ["validation reports", "service preflight", "test outputs", "deployment adapter status"],
+  "forbidden_context": ["unreviewed provider secrets", "waived blocking invariants without explicit record"],
+  "inputs": ["all prior task outputs"],
+  "outputs": ["release readiness report"],
+  "acceptance": ["Graph, API, DB, UI, service, and deployment gates pass or are explicitly blocked with owner and reason."]
+}

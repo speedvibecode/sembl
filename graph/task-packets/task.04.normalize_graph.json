@@ -1,0 +1,10 @@
+{
+  "task_id": "task.04.normalize_graph",
+  "agent": "Cartographer",
+  "scope": "Normalize concept and UI graphs into canonical graph node/edge set.",
+  "allowed_context": ["concept graph", "UI graph", "System Design node/edge rules", "DB Schema graph tables"],
+  "forbidden_context": ["feature as persisted node type", "direct UI logic mutation"],
+  "inputs": ["graph/concept_graph.json", "graph/ui_graph.json"],
+  "outputs": ["graph/normalized_graph.json"],
+  "acceptance": ["Only six node types are used.", "Only six edge types are used.", "All references resolve.", "No blocking ambiguities remain."]
+}

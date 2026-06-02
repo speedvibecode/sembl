@@ -1,0 +1,10 @@
+{
+  "task_id": "task.09.planner_execution_foundation",
+  "agent": "Builder",
+  "scope": "Planner and execution runtime.",
+  "allowed_context": ["task graph generation interfaces", "execution run/task entities", "DAG invariants"],
+  "forbidden_context": ["persisted execution context", "unscoped worker context", "execution without approval"],
+  "inputs": ["graph/normalized_graph.json", "graph/task_graph.json"],
+  "outputs": ["DAG generator", "scoped context generator", "execution lifecycle module"],
+  "acceptance": ["Valid graph produces deterministic task order.", "Cycle blocks generation.", "Execution requires valid approval.", "Context payload is not persisted."]
+}

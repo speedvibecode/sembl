@@ -1,0 +1,50 @@
+{
+  "schema_version": "sembl.v4_3.validation_report.v1",
+  "generated_at": "2026-06-02T13:04:12.111Z",
+  "status": "passed",
+  "passes": [
+    {
+      "name": "structural",
+      "status": "passed",
+      "violations": []
+    },
+    {
+      "name": "semantic",
+      "status": "passed",
+      "violations": []
+    },
+    {
+      "name": "mapping",
+      "status": "passed",
+      "violations": []
+    },
+    {
+      "name": "completeness",
+      "status": "passed",
+      "violations": []
+    },
+    {
+      "name": "execution_boundary",
+      "status": "passed",
+      "violations": []
+    },
+    {
+      "name": "ui_consistency",
+      "status": "passed",
+      "violations": []
+    },
+    {
+      "name": "service_secret_safety",
+      "status": "passed",
+      "violations": []
+    },
+    {
+      "name": "negative_cycle_fixture",
+      "status": "passed",
+      "violations": []
+    }
+  ],
+  "blocking_violations": [],
+  "warnings": [],
+  "summary": "Graph artifacts passed local V4.3 validation."
+}

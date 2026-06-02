@@ -1,0 +1,12 @@
+{
+  "task_id": "task.07.persistence_foundation",
+  "agent": "Data Steward",
+  "scope": "Supabase/Postgres persistence foundation.",
+  "allowed_context": ["db_schema.md", "normalized graph persistence nodes", "Supabase docs and advisors"],
+  "forbidden_context": ["service_role in public client", "RLS bypass shortcuts", "old migration history"],
+  "inputs": ["graph/normalized_graph.json", "sembl_docs/db_schema.md", "sembl_docs/techarch.md"],
+  "outputs": ["Supabase migrations", "RLS policies", "advisor report"],
+  "acceptance": ["Migrations apply cleanly to fresh isolated Supabase state.", "RLS is enabled for exposed schemas.", "Immutable graph/event records cannot update/delete.", "Advisors are reviewed."],
+  "current_status": "blocked",
+  "blocker": "Requires `graph/service_preflight.json` to record existing Supabase project takeover reset as complete and verified before any Supabase-backed build work starts."
+}

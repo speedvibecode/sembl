@@ -1,0 +1,131 @@
+{
+  "schema_version": "sembl.v4_3.agent_roster.v1",
+  "policy": {
+    "naming": "Use role names, not opaque numeric identifiers.",
+    "model_selection": "Select model and reasoning effort by task difficulty, ambiguity, integration risk, and validation responsibility. Do not use a binary model policy.",
+    "worker_context": "Workers are stateless and receive only scoped task packets, direct dependencies, required interfaces, and local invariants.",
+    "convergence": "After three failed convergence attempts on the same scope, escalate instead of looping."
+  },
+  "agents": [
+    {
+      "name": "Architect",
+      "role": "Maintains V4.3 methodology compliance and cross-domain architecture.",
+      "recommended_model_policy": {
+        "default_model": "gpt-5.5",
+        "reasoning_effort": "xhigh",
+        "use_when": "Ambiguous architecture, graph authority decisions, cross-domain tradeoffs."
+      },
+      "owns": ["methodology", "architecture", "authority_resolution"]
+    },
+    {
+      "name": "Cartographer",
+      "role": "Extracts and normalizes concept, UI, and canonical graph structures.",
+      "recommended_model_policy": {
+        "default_model": "gpt-5.5",
+        "reasoning_effort": "xhigh",
+        "use_when": "Graph extraction, normalization, source traceability, ambiguity reports."
+      },
+      "owns": ["concept_graph", "ui_graph", "normalized_graph"]
+    },
+    {
+      "name": "Interface Steward",
+      "role": "Owns API contracts, interface payloads, integration mappings, and contract stability.",
+      "recommended_model_policy": {
+        "default_model": "gpt-5.5",
+        "reasoning_effort": "high",
+        "use_when": "Public interfaces, mappings, examples, API and runtime contract validation."
+      },
+      "owns": ["interfaces", "integration_contracts", "api_contracts"]
+    },
+    {
+      "name": "Data Steward",
+      "role": "Owns Supabase/Postgres persistence, RLS policy design, migration ordering, and data lineage.",
+      "recommended_model_policy": {
+        "default_model": "gpt-5.5",
+        "reasoning_effort": "high",
+        "use_when": "Persistence, RLS, immutable graph/event tables, Supabase migration review."
+      },
+      "owns": ["persistence", "supabase", "rls", "migrations"]
+    },
+    {
+      "name": "UI Steward",
+      "role": "Owns UI graph compliance, screen hierarchy, progressive disclosure, and visual design constraints.",
+      "recommended_model_policy": {
+        "default_model": "gpt-5.4",
+        "reasoning_effort": "high",
+        "use_when": "Screen flows, UI implementation, design-system adherence, visual QA."
+      },
+      "owns": ["ui_graph", "screens", "design_system"]
+    },
+    {
+      "name": "Planner",
+      "role": "Generates executable task DAGs, graph slices, dependency order, and worker packets.",
+      "recommended_model_policy": {
+        "default_model": "gpt-5.5",
+        "reasoning_effort": "xhigh",
+        "use_when": "Task graph construction, dependency resolution, execution boundary slicing."
+      },
+      "owns": ["task_graph", "task_packets", "execution_boundaries"]
+    },
+    {
+      "name": "Service Steward",
+      "role": "Owns GitHub, Vercel, Supabase, and secrets preflight without committing credentials.",
+      "recommended_model_policy": {
+        "default_model": "gpt-5.4",
+        "reasoning_effort": "high",
+        "use_when": "Provider wiring, CLI checks, environment policy, deployment adapter setup."
+      },
+      "owns": ["github", "vercel", "supabase", "service_preflight"]
+    },
+    {
+      "name": "Builder",
+      "role": "Implements scoped product slices from validated task packets.",
+      "recommended_model_policy": {
+        "default_model": "gpt-5.3-codex",
+        "reasoning_effort": "high",
+        "use_when": "Bounded code implementation with explicit interfaces and acceptance checks."
+      },
+      "owns": ["scoped_implementation"]
+    },
+    {
+      "name": "Mechanic",
+      "role": "Performs bounded mechanical transformations and simple verification tasks.",
+      "recommended_model_policy": {
+        "default_model": "gpt-5.4-mini",
+        "reasoning_effort": "medium",
+        "use_when": "Deterministic formatting-free checks, schema sweeps, simple file inventories."
+      },
+      "owns": ["mechanical_checks"]
+    },
+    {
+      "name": "Gatekeeper",
+      "role": "Runs structural, semantic, invariant, UI, and integration validation gates.",
+      "recommended_model_policy": {
+        "default_model": "gpt-5.5",
+        "reasoning_effort": "xhigh",
+        "use_when": "Blocking validation, cross-checks, failure classification, acceptance review."
+      },
+      "owns": ["validation", "quality_gates"]
+    },
+    {
+      "name": "Integrator",
+      "role": "Checks cross-scope integration, runtime fit, API/data/UI consistency, and regression risk.",
+      "recommended_model_policy": {
+        "default_model": "gpt-5.5",
+        "reasoning_effort": "high",
+        "use_when": "Combining completed worker outputs and validating subsystem boundaries."
+      },
+      "owns": ["integration", "cross_scope_consistency"]
+    },
+    {
+      "name": "Reconciler",
+      "role": "Produces semantic diffs, lineage updates, retry routing, and escalation decisions.",
+      "recommended_model_policy": {
+        "default_model": "gpt-5.5",
+        "reasoning_effort": "xhigh",
+        "use_when": "Graph reconciliation, mutation routing, non-convergence triage."
+      },
+      "owns": ["reconciliation", "lineage", "escalation"]
+    }
+  ]
+}

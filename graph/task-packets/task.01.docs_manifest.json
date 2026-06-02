@@ -1,0 +1,10 @@
+{
+  "task_id": "task.01.docs_manifest",
+  "agent": "Cartographer",
+  "scope": "Canonical document manifest and source authority rules.",
+  "allowed_context": ["sembl_docs file metadata", "document hashes", "V4.3 methodology rule"],
+  "forbidden_context": ["old graph artifacts", "old source implementation"],
+  "inputs": ["sembl_docs/**"],
+  "outputs": ["graph/docs_manifest.json"],
+  "acceptance": ["`v_4.3.md` is the only top authority.", "All other docs are canonical peers.", "Domain ownership is recorded.", "No peer priority ladder exists."]
+}

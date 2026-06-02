@@ -1,0 +1,17 @@
+{
+  "schema_version": "sembl.v4_3.task_graph.fixture",
+  "tasks": [
+    {
+      "id": "cycle.a",
+      "dependencies": ["cycle.c"]
+    },
+    {
+      "id": "cycle.b",
+      "dependencies": ["cycle.a"]
+    },
+    {
+      "id": "cycle.c",
+      "dependencies": ["cycle.b"]
+    }
+  ]
+}

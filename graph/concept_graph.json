@@ -1,0 +1,869 @@
+{
+  "schema_version": "sembl.v4_3.concept_graph.v1",
+  "source_manifest": "graph/docs_manifest.json",
+  "extraction_model": {
+    "methodology_authority": "sembl_docs/v_4.3.md",
+    "peer_authority_rule": "Domain ownership after V4.3; no fixed peer priority.",
+    "feature_policy": "Features remain grouping metadata and traceability hints, not persisted graph node types."
+  },
+  "entities": [
+    {
+      "id": "entity.workspace",
+      "name": "Workspace",
+      "fields": {
+        "id": "string",
+        "name": "string",
+        "created_by": "string",
+        "created_at": "string"
+      },
+      "source_refs": ["prd.md#workspace-and-project-management", "db_schema.md#workspaces"]
+    },
+    {
+      "id": "entity.workspace_member",
+      "name": "WorkspaceMember",
+      "fields": {
+        "workspace_id": "string",
+        "user_id": "string",
+        "role": "string"
+      },
+      "source_refs": ["api_spec.md#workspace-members", "db_schema.md#workspace_members"]
+    },
+    {
+      "id": "entity.project",
+      "name": "Project",
+      "fields": {
+        "id": "string",
+        "workspace_id": "string",
+        "name": "string",
+        "lifecycle_state": "string",
+        "operational_mode": "string"
+      },
+      "source_refs": ["prd.md#project-creation", "db_schema.md#projects"]
+    },
+    {
+      "id": "entity.specification_document",
+      "name": "SpecificationDocument",
+      "fields": {
+        "id": "string",
+        "project_id": "string",
+        "spec_type": "string",
+        "status": "string"
+      },
+      "source_refs": ["prd.md#documentation-mode-requirements", "db_schema.md#specification_documents"]
+    },
+    {
+      "id": "entity.specification_revision",
+      "name": "SpecificationRevision",
+      "fields": {
+        "id": "string",
+        "document_id": "string",
+        "revision_number": "number",
+        "content": "string",
+        "authored_by": "string"
+      },
+      "source_refs": ["api_spec.md#specifications", "db_schema.md#specification_revisions"]
+    },
+    {
+      "id": "entity.graph_node",
+      "name": "GraphNode",
+      "fields": {
+        "id": "string",
+        "node_type": "string",
+        "name": "string",
+        "payload": "GraphPayload",
+        "source_spec_type": "string"
+      },
+      "source_refs": ["systemdesign.md#canonical-graph-structures", "api_spec.md#graph", "db_schema.md#graph_nodes"]
+    },
+    {
+      "id": "entity.graph_edge",
+      "name": "GraphEdge",
+      "fields": {
+        "id": "string",
+        "edge_type": "string",
+        "source_node_id": "string",
+        "target_node_id": "string",
+        "metadata": "GraphPayload"
+      },
+      "source_refs": ["systemdesign.md#canonical-graph-structures", "api_spec.md#graph", "db_schema.md#graph_edges"]
+    },
+    {
+      "id": "entity.graph_version",
+      "name": "GraphVersion",
+      "fields": {
+        "id": "string",
+        "project_id": "string",
+        "version_number": "number",
+        "parent_version_id": "string",
+        "created_at": "string"
+      },
+      "source_refs": ["prd.md#graph-versioning", "db_schema.md#graph_versions"]
+    },
+    {
+      "id": "entity.branch",
+      "name": "Branch",
+      "fields": {
+        "id": "string",
+        "project_id": "string",
+        "base_graph_version_id": "string",
+        "status": "string"
+      },
+      "source_refs": ["prd.md#branching-and-merge-requirements", "db_schema.md#branches"]
+    },
+    {
+      "id": "entity.validation_violation",
+      "name": "ValidationViolation",
+      "fields": {
+        "id": "string",
+        "invariant_id": "string",
+        "affected_structure": "string",
+        "reason": "string",
+        "graph_location": "string",
+        "severity": "string"
+      },
+      "source_refs": ["v_4.3.md#graph-validation-agent", "prd.md#validation-violation-reporting", "db_schema.md#validation_violations"]
+    },
+    {
+      "id": "entity.approval",
+      "name": "Approval",
+      "fields": {
+        "id": "string",
+        "project_id": "string",
+        "approval_type": "string",
+        "status": "string",
+        "impact_payload": "GraphPayload"
+      },
+      "source_refs": ["prd.md#canonical-approval-model", "api_spec.md#approvals", "db_schema.md#approvals"]
+    },
+    {
+      "id": "entity.execution_run",
+      "name": "ExecutionRun",
+      "fields": {
+        "id": "string",
+        "branch_id": "string",
+        "graph_version_id": "string",
+        "status": "string",
+        "failure_reason": "string"
+      },
+      "source_refs": ["api_spec.md#execution", "db_schema.md#execution_runs"]
+    },
+    {
+      "id": "entity.execution_task",
+      "name": "ExecutionTask",
+      "fields": {
+        "id": "string",
+        "execution_boundary_node_id": "string",
+        "sequence_number": "number",
+        "status": "string",
+        "dependency_task_ids": "array<string>",
+        "output_payload": "GraphPayload"
+      },
+      "source_refs": ["api_spec.md#execution", "db_schema.md#execution_tasks"]
+    },
+    {
+      "id": "entity.reconciliation_attempt",
+      "name": "ReconciliationAttempt",
+      "fields": {
+        "id": "string",
+        "execution_run_id": "string",
+        "status": "string",
+        "semantic_diff_id": "string"
+      },
+      "source_refs": ["prd.md#reconciliation-behavior", "db_schema.md#reconciliation_attempts"]
+    },
+    {
+      "id": "entity.deployment",
+      "name": "Deployment",
+      "fields": {
+        "id": "string",
+        "project_id": "string",
+        "provider": "string",
+        "status": "string",
+        "external_url": "string"
+      },
+      "source_refs": ["api_spec.md#deployments", "db_schema.md#deployment"]
+    },
+    {
+      "id": "entity.repository_reference",
+      "name": "RepositoryReference",
+      "fields": {
+        "id": "string",
+        "project_id": "string",
+        "provider": "string",
+        "repository_url": "string"
+      },
+      "source_refs": ["prd.md#repository-ingestion", "db_schema.md#repository_references"]
+    },
+    {
+      "id": "entity.service_integration",
+      "name": "ServiceIntegration",
+      "fields": {
+        "id": "string",
+        "workspace_id": "string",
+        "provider": "string",
+        "status": "string"
+      },
+      "source_refs": ["api_spec.md#workspace-integrations", "db_schema.md#workspace_integrations"]
+    },
+    {
+      "id": "entity.graph_payload",
+      "name": "GraphPayload",
+      "fields": {
+        "kind": "string",
+        "value": "string"
+      },
+      "source_refs": ["db_schema.md#graph-nodes-and-edges"]
+    }
+  ],
+  "interfaces": [
+    {
+      "id": "interface.create_workspace",
+      "name": "CreateWorkspace",
+      "input": {
+        "name": "string",
+        "actor_id": "string"
+      },
+      "output": {
+        "workspace": "Workspace"
+      },
+      "success_example": {
+        "input": {
+          "name": "Acme",
+          "actor_id": "user_1"
+        },
+        "output": {
+          "workspace": "workspace_1"
+        }
+      },
+      "failure_examples": [
+        {
+          "input": {
+            "name": "",
+            "actor_id": "user_1"
+          },
+          "output": {
+            "error": "invalid_workspace_name"
+          }
+        }
+      ],
+      "preconditions": ["Authenticated actor exists."],
+      "postconditions": ["Workspace exists with owner membership."],
+      "source_refs": ["api_spec.md#workspaces", "prd.md#workspace-creation"]
+    },
+    {
+      "id": "interface.create_project",
+      "name": "CreateProject",
+      "input": {
+        "workspace_id": "string",
+        "name": "string",
+        "actor_id": "string"
+      },
+      "output": {
+        "project": "Project"
+      },
+      "success_example": {
+        "input": {
+          "workspace_id": "workspace_1",
+          "name": "Sembl",
+          "actor_id": "user_1"
+        },
+        "output": {
+          "project": "project_1"
+        }
+      },
+      "failure_examples": [
+        {
+          "input": {
+            "workspace_id": "missing",
+            "name": "Sembl",
+            "actor_id": "user_1"
+          },
+          "output": {
+            "error": "workspace_not_found"
+          }
+        }
+      ],
+      "preconditions": ["Actor has workspace member permission."],
+      "postconditions": ["Project lifecycle starts in documentation mode."],
+      "source_refs": ["api_spec.md#projects", "prd.md#project-creation"]
+    },
+    {
+      "id": "interface.publish_specification_revision",
+      "name": "PublishSpecificationRevision",
+      "input": {
+        "project_id": "string",
+        "spec_type": "string",
+        "content": "string",
+        "actor_id": "string"
+      },
+      "output": {
+        "revision": "SpecificationRevision"
+      },
+      "success_example": {
+        "input": {
+          "project_id": "project_1",
+          "spec_type": "prd",
+          "content": "validated content",
+          "actor_id": "user_1"
+        },
+        "output": {
+          "revision": "revision_1"
+        }
+      },
+      "failure_examples": [
+        {
+          "input": {
+            "project_id": "project_1",
+            "spec_type": "unknown",
+            "content": "x",
+            "actor_id": "user_1"
+          },
+          "output": {
+            "error": "invalid_spec_type"
+          }
+        }
+      ],
+      "preconditions": ["Project exists.", "Actor may mutate specifications."],
+      "postconditions": ["Immutable revision is recorded.", "Validation may be triggered."],
+      "source_refs": ["api_spec.md#specifications", "prd.md#documentation-mode-requirements"]
+    },
+    {
+      "id": "interface.construct_concept_graph",
+      "name": "ConstructConceptGraph",
+      "input": {
+        "project_id": "string",
+        "revision_ids": "array<string>"
+      },
+      "output": {
+        "graph_version": "GraphVersion"
+      },
+      "success_example": {
+        "input": {
+          "project_id": "project_1",
+          "revision_ids": ["revision_1"]
+        },
+        "output": {
+          "graph_version": "graph_version_1"
+        }
+      },
+      "failure_examples": [
+        {
+          "input": {
+            "project_id": "project_1",
+            "revision_ids": []
+          },
+          "output": {
+            "error": "missing_source_revisions"
+          }
+        }
+      ],
+      "preconditions": ["Specifications are validated."],
+      "postconditions": ["Concept graph candidates exist with source references."],
+      "source_refs": ["v_4.3.md#extraction", "prd.md#graph-construction"]
+    },
+    {
+      "id": "interface.normalize_graph",
+      "name": "NormalizeGraph",
+      "input": {
+        "concept_graph_id": "string",
+        "ui_graph_id": "string"
+      },
+      "output": {
+        "graph_version": "GraphVersion"
+      },
+      "success_example": {
+        "input": {
+          "concept_graph_id": "concept_graph_1",
+          "ui_graph_id": "ui_graph_1"
+        },
+        "output": {
+          "graph_version": "graph_version_2"
+        }
+      },
+      "failure_examples": [
+        {
+          "input": {
+            "concept_graph_id": "concept_graph_1",
+            "ui_graph_id": "ui_graph_with_direct_mutation"
+          },
+          "output": {
+            "error": "ui_graph_mutation_surface_violation"
+          }
+        }
+      ],
+      "preconditions": ["Concept graph and UI graph are structurally valid."],
+      "postconditions": ["Normalized graph contains only approved node and edge types."],
+      "source_refs": ["v_4.3.md#normalization-strict", "prd.md#graph-normalization"]
+    },
+    {
+      "id": "interface.validate_graph",
+      "name": "ValidateGraph",
+      "input": {
+        "graph_version_id": "string"
+      },
+      "output": {
+        "violations": "array<ValidationViolation>"
+      },
+      "success_example": {
+        "input": {
+          "graph_version_id": "graph_version_2"
+        },
+        "output": {
+          "violations": []
+        }
+      },
+      "failure_examples": [
+        {
+          "input": {
+            "graph_version_id": "cyclic_graph"
+          },
+          "output": {
+            "error": "blocking_validation_violations"
+          }
+        }
+      ],
+      "preconditions": ["Graph exists."],
+      "postconditions": ["Validation result is graph-addressable."],
+      "source_refs": ["v_4.3.md#graph-validation-agent-formalized", "nfr.md#multi-pass-validation-constraint"]
+    },
+    {
+      "id": "interface.generate_task_graph",
+      "name": "GenerateTaskGraph",
+      "input": {
+        "graph_version_id": "string"
+      },
+      "output": {
+        "task_graph_id": "string"
+      },
+      "success_example": {
+        "input": {
+          "graph_version_id": "graph_version_2"
+        },
+        "output": {
+          "task_graph_id": "task_graph_1"
+        }
+      },
+      "failure_examples": [
+        {
+          "input": {
+            "graph_version_id": "graph_with_cycle"
+          },
+          "output": {
+            "error": "task_dag_cycle"
+          }
+        }
+      ],
+      "preconditions": ["Graph validation passed."],
+      "postconditions": ["Acyclic task DAG exists with scoped task packets."],
+      "source_refs": ["v_4.3.md#task-graph-enhanced", "prd.md#task-dag-generation"]
+    },
+    {
+      "id": "interface.request_execution_approval",
+      "name": "RequestExecutionApproval",
+      "input": {
+        "branch_id": "string",
+        "impact_payload": "GraphPayload"
+      },
+      "output": {
+        "approval": "Approval"
+      },
+      "success_example": {
+        "input": {
+          "branch_id": "branch_1",
+          "impact_payload": "impact_1"
+        },
+        "output": {
+          "approval": "approval_1"
+        }
+      },
+      "failure_examples": [
+        {
+          "input": {
+            "branch_id": "missing",
+            "impact_payload": "impact_1"
+          },
+          "output": {
+            "error": "branch_not_found"
+          }
+        }
+      ],
+      "preconditions": ["Branch exists.", "Impact is computed."],
+      "postconditions": ["Approval is visible and contextualized."],
+      "source_refs": ["prd.md#canonical-approval-model", "uiux.md#approval-visibility-principle"]
+    },
+    {
+      "id": "interface.start_execution",
+      "name": "StartExecution",
+      "input": {
+        "branch_id": "string",
+        "approval_id": "string"
+      },
+      "output": {
+        "execution_run": "ExecutionRun"
+      },
+      "success_example": {
+        "input": {
+          "branch_id": "branch_1",
+          "approval_id": "approval_1"
+        },
+        "output": {
+          "execution_run": "run_1"
+        }
+      },
+      "failure_examples": [
+        {
+          "input": {
+            "branch_id": "branch_1",
+            "approval_id": "expired"
+          },
+          "output": {
+            "error": "approval_expired"
+          }
+        }
+      ],
+      "preconditions": ["Validation passed.", "Approval is valid and non-expired.", "Manual start action is received."],
+      "postconditions": ["Execution run starts and tasks are materialized in DAG order."],
+      "source_refs": ["api_spec.md#execution", "prd.md#execution-requirements"]
+    },
+    {
+      "id": "interface.reconcile_execution_output",
+      "name": "ReconcileExecutionOutput",
+      "input": {
+        "execution_run_id": "string"
+      },
+      "output": {
+        "reconciliation_attempt": "ReconciliationAttempt"
+      },
+      "success_example": {
+        "input": {
+          "execution_run_id": "run_1"
+        },
+        "output": {
+          "reconciliation_attempt": "reconciliation_1"
+        }
+      },
+      "failure_examples": [
+        {
+          "input": {
+            "execution_run_id": "failed_run"
+          },
+          "output": {
+            "error": "execution_not_reconcilable"
+          }
+        }
+      ],
+      "preconditions": ["Execution has completed or failed with reconcilable output."],
+      "postconditions": ["Semantic diff and lineage are produced or failure is routed back to owner."],
+      "source_refs": ["techarch.md#reconciliation-module", "api_spec.md#reconciliation"]
+    },
+    {
+      "id": "interface.connect_workspace_integration",
+      "name": "ConnectWorkspaceIntegration",
+      "input": {
+        "workspace_id": "string",
+        "provider": "string"
+      },
+      "output": {
+        "integration": "ServiceIntegration"
+      },
+      "success_example": {
+        "input": {
+          "workspace_id": "workspace_1",
+          "provider": "github"
+        },
+        "output": {
+          "integration": "integration_1"
+        }
+      },
+      "failure_examples": [
+        {
+          "input": {
+            "workspace_id": "workspace_1",
+            "provider": "unknown"
+          },
+          "output": {
+            "error": "unsupported_provider"
+          }
+        }
+      ],
+      "preconditions": ["Actor has workspace admin authority.", "Provider OAuth or CLI state is available."],
+      "postconditions": ["Only provider metadata is persisted; credentials remain external."],
+      "source_refs": ["api_spec.md#workspace-integrations", "techarch.md#external-runtime-dependencies"]
+    }
+  ],
+  "feature_groupings": [
+    {
+      "id": "feature.documentation_mode",
+      "name": "Documentation Mode",
+      "interfaces": ["PublishSpecificationRevision", "ConstructConceptGraph", "ValidateGraph"],
+      "source_refs": ["prd.md#documentation-mode", "uiux.md#documentation-mode"]
+    },
+    {
+      "id": "feature.graph_governed_execution",
+      "name": "Graph Governed Execution",
+      "interfaces": ["NormalizeGraph", "GenerateTaskGraph", "StartExecution"],
+      "source_refs": ["v_4.3.md#operational-procedure", "prd.md#execution-mode"]
+    },
+    {
+      "id": "feature.validation_reconciliation",
+      "name": "Validation And Reconciliation",
+      "interfaces": ["ValidateGraph", "ReconcileExecutionOutput"],
+      "source_refs": ["nfr.md#validation-graph-integrity-and-invariant-constraints", "techarch.md#reconciliation-module"]
+    },
+    {
+      "id": "feature.provider_wiring",
+      "name": "Provider Wiring",
+      "interfaces": ["ConnectWorkspaceIntegration"],
+      "source_refs": ["api_spec.md#workspace-integrations", "techarch.md#external-runtime-dependencies"]
+    }
+  ],
+  "integration_contracts": [
+    {
+      "id": "contract.new_project_to_validated_graph",
+      "name": "NewProjectToValidatedGraph",
+      "steps": [
+        {
+          "interface": "CreateWorkspace",
+          "input_mapping": {
+            "name": "intent.workspace_name",
+            "actor_id": "session.user_id"
+          }
+        },
+        {
+          "interface": "CreateProject",
+          "input_mapping": {
+            "workspace_id": "CreateWorkspace.output.workspace.id",
+            "name": "intent.project_name",
+            "actor_id": "session.user_id"
+          }
+        },
+        {
+          "interface": "PublishSpecificationRevision",
+          "input_mapping": {
+            "project_id": "CreateProject.output.project.id",
+            "spec_type": "intent.spec_type",
+            "content": "intent.spec_content",
+            "actor_id": "session.user_id"
+          }
+        },
+        {
+          "interface": "ConstructConceptGraph",
+          "input_mapping": {
+            "project_id": "CreateProject.output.project.id",
+            "revision_ids": "PublishSpecificationRevision.output.revision.id"
+          }
+        },
+        {
+          "interface": "NormalizeGraph",
+          "input_mapping": {
+            "concept_graph_id": "ConstructConceptGraph.output.graph_version.id",
+            "ui_graph_id": "locked_design_artifact.id"
+          }
+        },
+        {
+          "interface": "ValidateGraph",
+          "input_mapping": {
+            "graph_version_id": "NormalizeGraph.output.graph_version.id"
+          }
+        }
+      ],
+      "error_handling": ["Stop at first blocking validation failure.", "Persist graph-addressable violation output.", "Route ambiguity to human review."],
+      "transaction": {
+        "atomic": false,
+        "rollback": "immutable_revision_and_event_lineage_are_preserved"
+      },
+      "source_refs": ["v_4.3.md#docs-concept-graph-normalized-graph", "prd.md#canonical-product-flow"]
+    },
+    {
+      "id": "contract.validated_graph_to_execution",
+      "name": "ValidatedGraphToExecution",
+      "steps": [
+        {
+          "interface": "GenerateTaskGraph",
+          "input_mapping": {
+            "graph_version_id": "ValidateGraph.input.graph_version_id"
+          }
+        },
+        {
+          "interface": "RequestExecutionApproval",
+          "input_mapping": {
+            "branch_id": "active_branch.id",
+            "impact_payload": "GenerateTaskGraph.output.impact_payload"
+          }
+        },
+        {
+          "interface": "StartExecution",
+          "input_mapping": {
+            "branch_id": "active_branch.id",
+            "approval_id": "RequestExecutionApproval.output.approval.id"
+          }
+        },
+        {
+          "interface": "ReconcileExecutionOutput",
+          "input_mapping": {
+            "execution_run_id": "StartExecution.output.execution_run.id"
+          }
+        }
+      ],
+      "error_handling": ["Manual execution requires a valid non-expired approval.", "Retry is bounded to three lineage attempts.", "Non-convergence escalates."],
+      "transaction": {
+        "atomic": false,
+        "rollback": "reconciliation_rollback_records_lineage_without_mutating_prior_graph_versions"
+      },
+      "source_refs": ["api_spec.md#execution", "prd.md#execution-behavior"]
+    },
+    {
+      "id": "contract.provider_preflight",
+      "name": "ProviderPreflight",
+      "steps": [
+        {
+          "interface": "ConnectWorkspaceIntegration",
+          "input_mapping": {
+            "workspace_id": "workspace.id",
+            "provider": "github"
+          }
+        },
+        {
+          "interface": "ConnectWorkspaceIntegration",
+          "input_mapping": {
+            "workspace_id": "workspace.id",
+            "provider": "vercel"
+          }
+        }
+      ],
+      "error_handling": ["Do not commit provider secrets.", "Record provider metadata only.", "Use fresh isolated Supabase branch/project for this attempt."],
+      "transaction": {
+        "atomic": false,
+        "rollback": "unlink_provider_metadata_without_deleting_external_artifacts"
+      },
+      "source_refs": ["api_spec.md#workspace-integrations", "techarch.md#github", "techarch.md#vercel"]
+    }
+  ],
+  "flows": [
+    {
+      "id": "flow.documentation_mode",
+      "name": "DocumentationModeFlow",
+      "integration_contract_ids": ["contract.new_project_to_validated_graph"],
+      "source_refs": ["prd.md#documentation-mode", "uiux.md#documentation-mode"]
+    },
+    {
+      "id": "flow.execution_mode",
+      "name": "ExecutionModeFlow",
+      "integration_contract_ids": ["contract.validated_graph_to_execution"],
+      "source_refs": ["prd.md#execution-mode", "uiux.md#execution-mode"]
+    },
+    {
+      "id": "flow.provider_wiring",
+      "name": "ProviderWiringFlow",
+      "integration_contract_ids": ["contract.provider_preflight"],
+      "source_refs": ["techarch.md#external-runtime-dependencies", "api_spec.md#workspace-integrations"]
+    }
+  ],
+  "invariants": [
+    {
+      "id": "G1",
+      "name": "GraphSelfContained",
+      "rule": "Every graph reference resolves inside the graph or to an explicit source document reference.",
+      "scope": "graph",
+      "severity": "blocking",
+      "source_refs": ["v_4.3.md#graph-invariants", "nfr.md#graph-integrity-constraint"]
+    },
+    {
+      "id": "G2",
+      "name": "ApprovedNodeTypesOnly",
+      "rule": "Normalized graph nodes must use only entity, interface, integration_contract, flow, invariant, and execution_boundary.",
+      "scope": "normalized_graph",
+      "severity": "blocking",
+      "source_refs": ["systemdesign.md#canonical-graph-structures", "db_schema.md#graph_nodes"]
+    },
+    {
+      "id": "G3",
+      "name": "NoDuplicateStructures",
+      "rule": "Canonical graph structures must not duplicate names or semantic responsibilities within the same node type.",
+      "scope": "graph",
+      "severity": "blocking",
+      "source_refs": ["v_4.3.md#normalization-strict", "prd.md#graph-validation"]
+    },
+    {
+      "id": "I1",
+      "name": "ExplicitInterfaceContracts",
+      "rule": "Interfaces must define input, output, preconditions, postconditions, success examples, and failure examples.",
+      "scope": "interfaces",
+      "severity": "blocking",
+      "source_refs": ["v_4.3.md#interface", "nfr.md#interface-integrity-constraint"]
+    },
+    {
+      "id": "C1",
+      "name": "ExplicitIntegrationMappings",
+      "rule": "Integration contracts must define ordered steps, explicit field mappings, error handling, and rollback behavior.",
+      "scope": "integration_contracts",
+      "severity": "blocking",
+      "source_refs": ["v_4.3.md#integration-contract", "nfr.md#integration-contract-constraint"]
+    },
+    {
+      "id": "E1",
+      "name": "NoUndefinedExecutionConcepts",
+      "rule": "Task generation and workers must not introduce undefined concepts outside the normalized graph.",
+      "scope": "task_graph",
+      "severity": "blocking",
+      "source_refs": ["v_4.3.md#execution-invariants", "prd.md#scoped-execution-behavior"]
+    },
+    {
+      "id": "E2",
+      "name": "AcyclicTaskDag",
+      "rule": "Task graph dependencies must be acyclic and topologically executable.",
+      "scope": "task_graph",
+      "severity": "blocking",
+      "source_refs": ["v_4.3.md#task-graph-orchestration", "prd.md#task-dag-generation"]
+    },
+    {
+      "id": "D1",
+      "name": "UiFromDesignOnly",
+      "rule": "UI implementation derives from UI/UX and DESIGN artifacts; UI fixes mutate design artifacts, not logic graph structures.",
+      "scope": "ui_graph",
+      "severity": "blocking",
+      "source_refs": ["v_4.3.md#ui-invariants", "uiux.md#graph-visibility-principle", "DESIGN.md#brand-style"]
+    },
+    {
+      "id": "S1",
+      "name": "ProviderSecretsExternal",
+      "rule": "GitHub, Vercel, Supabase, and OpenAI credentials must remain external to committed graph artifacts.",
+      "scope": "service_preflight",
+      "severity": "blocking",
+      "source_refs": ["techarch.md#external-runtime-dependencies", "api_spec.md#workspace-integrations"]
+    }
+  ],
+  "execution_boundaries": [
+    {
+      "id": "boundary.docs_to_graph",
+      "name": "DocsToGraphBoundary",
+      "included_concepts": ["entity.*", "interface.construct_concept_graph", "interface.normalize_graph", "interface.validate_graph"],
+      "dependency_scope": "Docs manifest, concept extraction, normalization, validation."
+    },
+    {
+      "id": "boundary.persistence",
+      "name": "PersistenceBoundary",
+      "included_concepts": ["entity.graph_node", "entity.graph_edge", "entity.graph_version", "entity.execution_run", "entity.execution_task"],
+      "dependency_scope": "Supabase/Postgres schema, RLS, immutable graph/event tables."
+    },
+    {
+      "id": "boundary.api_runtime",
+      "name": "ApiRuntimeBoundary",
+      "included_concepts": ["interface.*"],
+      "dependency_scope": "Next.js server APIs, authorization, service modules."
+    },
+    {
+      "id": "boundary.ui_runtime",
+      "name": "UiRuntimeBoundary",
+      "included_concepts": ["flow.documentation_mode", "flow.execution_mode"],
+      "dependency_scope": "UI shell, 13 screen hierarchy, progressive disclosure, graph inspection."
+    },
+    {
+      "id": "boundary.service_wiring",
+      "name": "ServiceWiringBoundary",
+      "included_concepts": ["interface.connect_workspace_integration", "entity.service_integration", "entity.repository_reference", "entity.deployment"],
+      "dependency_scope": "GitHub remote, Vercel project, fresh Supabase branch/project, secret isolation."
+    }
+  ],
+  "ambiguities": []
+}
