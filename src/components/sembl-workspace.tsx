@@ -41,6 +41,7 @@ import type {
   ExecutionRun,
   GraphNode,
   ModelCatalogEntry,
+  ProjectBuildSnapshot,
   ProjectDirectory,
   RuntimeHomeData,
   SpecificationDraft
@@ -54,6 +55,7 @@ type Props = {
 type View =
   | "Overview"
   | "Specifications"
+  | "Factory"
   | "Execution"
   | "Changes"
   | "Deployments"
@@ -71,12 +73,13 @@ type SearchResult = {
   label: string;
   detail: string;
   view: View;
-  kind: "spec" | "node" | "run";
+  kind: "spec" | "node" | "run" | "file";
 };
 
 const views: Array<{ id: View; icon: typeof Layers3 }> = [
   { id: "Overview", icon: Activity },
   { id: "Specifications", icon: ScrollText },
+  { id: "Factory", icon: Code2 },
   { id: "Execution", icon: Play },
   { id: "Changes", icon: GitBranch },
   { id: "Deployments", icon: Rocket },
@@ -92,20 +95,29 @@ const statusTone: Record<string, string> = {
   passed: "healthy",
   passed_with_warnings: "attention",
   ready_for_execution: "healthy",
+  generated: "healthy",
+  configured: "healthy",
+  supabase: "healthy",
   awaiting_approval: "awaiting",
   under_review: "awaiting",
   pending: "awaiting",
   queued: "awaiting",
+  generating: "informational",
   running: "informational",
   executing: "informational",
   reconciling: "informational",
   deploying: "informational",
+  github_blocked: "attention",
+  deploy_blocked: "attention",
+  api_key_required: "attention",
+  approval_required: "attention",
   warning: "attention",
   failed: "blocked",
   rejected: "blocked",
   escalated: "escalated",
   draft: "muted",
-  not_deployed: "muted"
+  not_deployed: "muted",
+  not_run: "muted"
 };
 
 const nodeColors: Record<string, string> = {
@@ -232,11 +244,13 @@ function Metric({
 function OverviewView({
   data,
   onOpenSpecifications,
+  onOpenFactory,
   onOpenExecution,
   onOpenChanges
 }: {
   data: RuntimeHomeData;
   onOpenSpecifications: () => void;
+  onOpenFactory: () => void;
   onOpenExecution: () => void;
   onOpenChanges: () => void;
 }) {
@@ -244,6 +258,7 @@ function OverviewView({
   const run = latestRun(data);
   const latestValidation = data.validationGroups[0] ?? null;
   const latestDeployment = data.deployments[0] ?? null;
+  const latestBuild = data.builds.runs[0] ?? null;
 
   return (
     <section className="view-grid overview-view">
@@ -279,6 +294,15 @@ function OverviewView({
             <button type="button" className="secondary-action" onClick={onOpenExecution}>
               <Play size={16} />
               Open execution
+            </button>
+          </article>
+          <article>
+            <span>Factory output</span>
+            <strong>{latestBuild?.status.replaceAll("_", " ") ?? "No build artifact"}</strong>
+            <p>{latestBuild ? `${data.builds.files.length} generated files are persisted for inspection.` : "Generate a real project file bundle from published specs."}</p>
+            <button type="button" className="secondary-action" onClick={onOpenFactory}>
+              <Code2 size={16} />
+              Open factory
             </button>
           </article>
           <article>
@@ -421,6 +445,183 @@ function SpecsView({
           </button>
         </div>
       </div>
+    </section>
+  );
+}
+
+function metadataRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function FactoryView({
+  data,
+  apiKey,
+  model,
+  models,
+  buildPrompt,
+  selectedFilePath,
+  requestState,
+  onApiKeyChange,
+  onModelChange,
+  onRefreshModels,
+  onBuildPromptChange,
+  onGenerateBuild,
+  onSelectFile
+}: {
+  data: RuntimeHomeData;
+  apiKey: string;
+  model: string;
+  models: ModelCatalogEntry[];
+  buildPrompt: string;
+  selectedFilePath: string;
+  requestState: RequestState;
+  onApiKeyChange: (value: string) => void;
+  onModelChange: (value: string) => void;
+  onRefreshModels: () => void;
+  onBuildPromptChange: (value: string) => void;
+  onGenerateBuild: () => void;
+  onSelectFile: (path: string) => void;
+}) {
+  const latestBuild = data.builds.runs[0] ?? null;
+  const selectedFile =
+    data.builds.files.find((file) => file.path === selectedFilePath) ?? data.builds.files[0];
+  const repositoryExport = metadataRecord(latestBuild?.metadata.repository_export);
+  const deployment = metadataRecord(latestBuild?.metadata.deployment);
+
+  return (
+    <section className="factory-layout">
+      <div className="panel factory-command">
+        <SectionHeader
+          title="Project Factory"
+          eyebrow="Specs -> graph -> generated software"
+          action={latestBuild ? <StatusPill label={latestBuild.status} icon={Code2} /> : null}
+        />
+        <div className="factory-command-grid">
+          <label>
+            OpenAI API key
+            <input
+              type="password"
+              value={apiKey}
+              onChange={(event) => onApiKeyChange(event.target.value)}
+              placeholder="sk-... kept for this request only"
+              autoComplete="off"
+            />
+          </label>
+          <label>
+            Build model
+            <select value={model} onChange={(event) => onModelChange(event.target.value)}>
+              {models.map((entry) => (
+                <option key={entry.id} value={entry.id}>
+                  {entry.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <label>
+          Build instruction
+          <textarea
+            className="factory-prompt"
+            value={buildPrompt}
+            onChange={(event) => onBuildPromptChange(event.target.value)}
+            placeholder="Describe the first usable app Sembl should compile from the published specs."
+          />
+        </label>
+        <div className="button-row">
+          <button type="button" className="secondary-action" onClick={onRefreshModels}>
+            <RefreshCw size={16} />
+            Refresh models
+          </button>
+          <button type="button" className="primary-action" onClick={onGenerateBuild}>
+            {requestState.status === "loading" ? <Loader2 size={16} /> : <Sparkles size={16} />}
+            Generate build
+          </button>
+        </div>
+        <p className={clsx("request-message", `request-${requestState.status}`)}>
+          {requestState.message}
+        </p>
+      </div>
+
+      <aside className="panel factory-runs">
+        <SectionHeader title="Build Runs" eyebrow="Durable artifacts" />
+        <div className="table-list compact-list">
+          {data.builds.runs.map((run) => (
+            <article key={run.id} className="table-row">
+              <div>
+                <strong>{run.summary || `Build ${run.id.slice(0, 8)}`}</strong>
+                <span>{run.model} - {new Date(run.created_at).toLocaleString()}</span>
+              </div>
+              <StatusPill label={run.status} icon={Code2} />
+            </article>
+          ))}
+          {!data.builds.runs.length ? (
+            <div className="empty-state">
+              <p>No build artifact exists. Publish specs, compile the graph, then generate a project bundle.</p>
+            </div>
+          ) : null}
+        </div>
+      </aside>
+
+      <div className="panel factory-files">
+        <SectionHeader
+          title="Generated Files"
+          eyebrow={latestBuild ? `${data.builds.files.length} files from ${latestBuild.id.slice(0, 8)}` : "No bundle"}
+        />
+        <div className="file-browser">
+          <nav className="file-list" aria-label="Generated files">
+            {data.builds.files.map((file) => (
+              <button
+                key={file.id}
+                type="button"
+                className={clsx("file-row", selectedFile?.path === file.path && "active")}
+                onClick={() => onSelectFile(file.path)}
+              >
+                <Code2 size={15} />
+                <span>{file.path}</span>
+                <small>{file.role}</small>
+              </button>
+            ))}
+          </nav>
+          <article className="file-preview">
+            {selectedFile ? (
+              <>
+                <div className="file-preview-header">
+                  <div>
+                    <strong>{selectedFile.path}</strong>
+                    <span>{selectedFile.language ?? "text"} - {selectedFile.byte_size} bytes</span>
+                  </div>
+                  <span className="mono">{selectedFile.checksum.slice(0, 10)}</span>
+                </div>
+                <pre>{selectedFile.content}</pre>
+              </>
+            ) : (
+              <div className="empty-state">
+                <p>Generated files will appear here with persisted content and checksums.</p>
+              </div>
+            )}
+          </article>
+        </div>
+      </div>
+
+      <aside className="panel factory-blockers">
+        <SectionHeader title="Repository and Deploy" eyebrow="No fake green states" />
+        <div className="blocker-stack">
+          <article>
+            <StatusPill label={String(repositoryExport.status ?? "not_run")} icon={GitBranch} />
+            <p>{String(repositoryExport.reason ?? "Generate a build before repository export.")}</p>
+          </article>
+          <article>
+            <StatusPill label={String(deployment.status ?? "not_run")} icon={Rocket} />
+            <p>{String(deployment.reason ?? "Generate a build before deployment.")}</p>
+          </article>
+          <article>
+            <StatusPill label="supabase" icon={ShieldCheck} />
+            <p>Build runs and files are persisted in Supabase. API keys are request-only unless a server key is configured.</p>
+          </article>
+        </div>
+      </aside>
     </section>
   );
 }
@@ -995,9 +1196,13 @@ export function SemblWorkspace({ initialData, initialDirectory }: Props) {
   const [selectedSpecId, setSelectedSpecId] = useState(initialData?.specs[0]?.id ?? "");
   const [editorContent, setEditorContent] = useState(initialData?.specs[0]?.draft_content ?? "");
   const [selectedNodeId, setSelectedNodeId] = useState(initialData?.graph.nodes[0]?.id ?? "");
+  const [selectedBuildFilePath, setSelectedBuildFilePath] = useState(
+    initialData?.builds.files[0]?.path ?? ""
+  );
   const [searchTerm, setSearchTerm] = useState("");
   const [projectName, setProjectName] = useState("");
   const [projectBrief, setProjectBrief] = useState("");
+  const [buildPrompt, setBuildPrompt] = useState("");
   const [requestState, setRequestState] = useState<RequestState>({
     status: "idle",
     message: "Ready."
@@ -1061,8 +1266,17 @@ export function SemblWorkspace({ initialData, initialDirectory }: Props) {
         view: "Execution",
         kind: "run"
       }));
+    const files = data.builds.files
+      .filter((file) => file.path.toLowerCase().includes(term))
+      .map<SearchResult>((file) => ({
+        id: file.path,
+        label: file.path,
+        detail: `${file.role} build file`,
+        view: "Factory",
+        kind: "file"
+      }));
 
-    return [...specs, ...nodes, ...runs].slice(0, 8);
+    return [...specs, ...nodes, ...runs, ...files].slice(0, 8);
   }, [data, searchTerm]);
 
   useEffect(() => {
@@ -1082,6 +1296,11 @@ export function SemblWorkspace({ initialData, initialDirectory }: Props) {
     }
     setSelectedNodeId((current) =>
       next.graph.nodes.some((node) => node.id === current) ? current : next.graph.nodes[0]?.id ?? ""
+    );
+    setSelectedBuildFilePath((current) =>
+      next.builds.files.some((file) => file.path === current)
+        ? current
+        : next.builds.files[0]?.path ?? ""
     );
     setRequestState({ status: "success", message });
     return next;
@@ -1134,6 +1353,9 @@ export function SemblWorkspace({ initialData, initialDirectory }: Props) {
     if (result.kind === "node") {
       setSelectedNodeId(result.id);
     }
+    if (result.kind === "file") {
+      setSelectedBuildFilePath(result.id);
+    }
   }
 
   function hydrateProject(next: RuntimeHomeData) {
@@ -1143,6 +1365,7 @@ export function SemblWorkspace({ initialData, initialDirectory }: Props) {
     setSelectedSpecId(next.specs[0]?.id ?? "");
     setEditorContent(next.specs[0]?.draft_content ?? "");
     setSelectedNodeId(next.graph.nodes[0]?.id ?? "");
+    setSelectedBuildFilePath(next.builds.files[0]?.path ?? "");
     setSearchTerm("");
     window.history.replaceState(null, "", `/?project=${next.snapshot.project.id}`);
   }
@@ -1254,6 +1477,30 @@ export function SemblWorkspace({ initialData, initialDirectory }: Props) {
     });
   }
 
+  async function generateBuild() {
+    if (!data) return;
+    await runAction("Generating project artifact from published specs...", async () => {
+      const snapshot = await apiFetch<ProjectBuildSnapshot>(
+        `/api/v1/projects/${data.snapshot.project.id}/builds`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            apiKey: apiKey.trim() || undefined,
+            model,
+            prompt: buildPrompt.trim() || undefined
+          })
+        }
+      );
+      const next = await refreshState(
+        snapshot.runs[0]?.status === "generated"
+          ? "Project artifact generated."
+          : "Project artifact generated with truthful provider blockers."
+      );
+      setSelectedBuildFilePath(snapshot.files[0]?.path ?? next.builds.files[0]?.path ?? "");
+      setView("Factory");
+    });
+  }
+
   async function analyzeGraph() {
     if (!data || !selectedNode) return;
     if (!apiKey.trim()) {
@@ -1307,6 +1554,7 @@ export function SemblWorkspace({ initialData, initialDirectory }: Props) {
       <OverviewView
         data={data}
         onOpenSpecifications={() => setView("Specifications")}
+        onOpenFactory={() => setView("Factory")}
         onOpenExecution={() => setView("Execution")}
         onOpenChanges={() => setView("Changes")}
       />
@@ -1321,6 +1569,22 @@ export function SemblWorkspace({ initialData, initialDirectory }: Props) {
         onSaveDraft={saveDraft}
         onPublish={publish}
         onCompileGraph={compileGraph}
+      />
+    ) : view === "Factory" ? (
+      <FactoryView
+        data={data}
+        apiKey={apiKey}
+        model={model}
+        models={models}
+        buildPrompt={buildPrompt}
+        selectedFilePath={selectedBuildFilePath}
+        requestState={requestState}
+        onApiKeyChange={setApiKey}
+        onModelChange={setModel}
+        onRefreshModels={loadModels}
+        onBuildPromptChange={setBuildPrompt}
+        onGenerateBuild={generateBuild}
+        onSelectFile={setSelectedBuildFilePath}
       />
     ) : view === "Execution" ? (
       <ExecutionView

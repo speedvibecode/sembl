@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import type { PoolClient } from "pg";
 import { query, toIso, withTransaction } from "./db";
+import { DEFAULT_OPENAI_MODEL } from "./openai-models";
+import { generateProjectBuild, providerState } from "./project-build-generator";
 import type {
   Approval,
   DeploymentRecord,
@@ -13,6 +15,9 @@ import type {
   GraphPayload,
   GraphVersion,
   NotificationRecord,
+  ProjectBuildFile,
+  ProjectBuildRun,
+  ProjectBuildSnapshot,
   ProjectDirectory,
   ProjectDirectoryProject,
   ProjectSnapshot,
@@ -46,6 +51,201 @@ const SPEC_TYPES: SpecificationType[] = [
   "api_spec",
   "tech_architecture"
 ];
+
+let buildArtifactSchemaReady = false;
+
+async function ensureProjectBuildArtifactSchema() {
+  if (buildArtifactSchemaReady) {
+    return;
+  }
+
+  await query(`
+    do $$
+    begin
+      create type public.project_build_status as enum (
+        'queued',
+        'generating',
+        'generated',
+        'github_blocked',
+        'deploy_blocked',
+        'failed'
+      );
+    exception when duplicate_object then null;
+    end $$;
+
+    do $$
+    begin
+      create type public.project_build_file_role as enum (
+        'source',
+        'config',
+        'test',
+        'doc',
+        'asset'
+      );
+    exception when duplicate_object then null;
+    end $$;
+
+    alter type public.event_type add value if not exists 'BuildStarted';
+    alter type public.event_type add value if not exists 'BuildCompleted';
+    alter type public.event_type add value if not exists 'BuildFailed';
+
+    create table if not exists public.project_build_runs (
+      id uuid primary key default gen_random_uuid(),
+      project_id uuid not null references public.projects(id) on delete cascade,
+      branch_id uuid not null references public.branches(id),
+      graph_version_id uuid not null references public.graph_versions(id),
+      execution_run_id uuid references public.execution_runs(id),
+      status public.project_build_status not null default 'queued',
+      model text not null,
+      prompt_hash text not null,
+      summary text not null default '',
+      repository_url text,
+      deployment_url text,
+      failure_reason text,
+      metadata jsonb not null default '{}',
+      triggered_by uuid not null references auth.users(id),
+      started_at timestamptz,
+      completed_at timestamptz,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
+
+    create table if not exists public.project_build_files (
+      id uuid primary key default gen_random_uuid(),
+      build_run_id uuid not null references public.project_build_runs(id) on delete cascade,
+      project_id uuid not null references public.projects(id) on delete cascade,
+      path text not null,
+      role public.project_build_file_role not null default 'source',
+      language text,
+      content text not null,
+      checksum text not null,
+      byte_size integer not null check (byte_size >= 0),
+      metadata jsonb not null default '{}',
+      created_at timestamptz not null default now(),
+      unique (build_run_id, path),
+      check (path !~ '(^/|^\\.\\.?/|/\\.\\.?/|/\\.\\.?$|\\\\)')
+    );
+
+    create index if not exists idx_project_build_runs_project_created
+      on public.project_build_runs(project_id, created_at desc);
+    create index if not exists idx_project_build_runs_graph_version
+      on public.project_build_runs(graph_version_id);
+    create index if not exists idx_project_build_files_build_path
+      on public.project_build_files(build_run_id, path);
+    create index if not exists idx_project_build_files_project
+      on public.project_build_files(project_id);
+
+    drop trigger if exists trg_project_build_runs_updated_at on public.project_build_runs;
+    create trigger trg_project_build_runs_updated_at
+    before update on public.project_build_runs
+    for each row execute function public.set_updated_at();
+
+    drop trigger if exists trg_project_build_files_immutable on public.project_build_files;
+    create trigger trg_project_build_files_immutable
+    before update or delete on public.project_build_files
+    for each row execute function sembl_private.prevent_immutable_update_delete();
+
+    alter table public.project_build_runs enable row level security;
+    alter table public.project_build_files enable row level security;
+
+    drop policy if exists "project_build_runs_select_project_members" on public.project_build_runs;
+    create policy "project_build_runs_select_project_members"
+    on public.project_build_runs
+    for select
+    to authenticated
+    using (
+      exists (
+        select 1
+        from public.projects p
+        join public.workspace_members wm on wm.workspace_id = p.workspace_id
+        where p.id = project_build_runs.project_id
+          and wm.user_id = (select auth.uid())
+      )
+    );
+
+    drop policy if exists "project_build_runs_insert_project_members" on public.project_build_runs;
+    create policy "project_build_runs_insert_project_members"
+    on public.project_build_runs
+    for insert
+    to authenticated
+    with check (
+      triggered_by = (select auth.uid())
+      and exists (
+        select 1
+        from public.projects p
+        join public.workspace_members wm on wm.workspace_id = p.workspace_id
+        where p.id = project_build_runs.project_id
+          and wm.user_id = (select auth.uid())
+          and wm.role in ('owner', 'admin', 'member')
+      )
+    );
+
+    drop policy if exists "project_build_runs_update_project_members" on public.project_build_runs;
+    create policy "project_build_runs_update_project_members"
+    on public.project_build_runs
+    for update
+    to authenticated
+    using (
+      exists (
+        select 1
+        from public.projects p
+        join public.workspace_members wm on wm.workspace_id = p.workspace_id
+        where p.id = project_build_runs.project_id
+          and wm.user_id = (select auth.uid())
+          and wm.role in ('owner', 'admin', 'member')
+      )
+    )
+    with check (
+      exists (
+        select 1
+        from public.projects p
+        join public.workspace_members wm on wm.workspace_id = p.workspace_id
+        where p.id = project_build_runs.project_id
+          and wm.user_id = (select auth.uid())
+          and wm.role in ('owner', 'admin', 'member')
+      )
+    );
+
+    drop policy if exists "project_build_files_select_project_members" on public.project_build_files;
+    create policy "project_build_files_select_project_members"
+    on public.project_build_files
+    for select
+    to authenticated
+    using (
+      exists (
+        select 1
+        from public.projects p
+        join public.workspace_members wm on wm.workspace_id = p.workspace_id
+        where p.id = project_build_files.project_id
+          and wm.user_id = (select auth.uid())
+      )
+    );
+
+    drop policy if exists "project_build_files_insert_project_members" on public.project_build_files;
+    create policy "project_build_files_insert_project_members"
+    on public.project_build_files
+    for insert
+    to authenticated
+    with check (
+      exists (
+        select 1
+        from public.projects p
+        join public.workspace_members wm on wm.workspace_id = p.workspace_id
+        join public.project_build_runs pbr on pbr.project_id = p.id
+        where p.id = project_build_files.project_id
+          and pbr.id = project_build_files.build_run_id
+          and wm.user_id = (select auth.uid())
+          and wm.role in ('owner', 'admin', 'member')
+      )
+    );
+
+    grant select on public.project_build_runs, public.project_build_files to authenticated;
+    grant insert, update on public.project_build_runs to authenticated;
+    grant insert on public.project_build_files to authenticated;
+  `);
+
+  buildArtifactSchemaReady = true;
+}
 
 const navigation = {
   global_navigation: ["Workspace Home", "Approval Center", "Activity Center", "Workspace Settings"],
@@ -433,6 +633,52 @@ function toDeployment(row: {
     ...row,
     deployed_at: toIso(row.deployed_at),
     health_verified_at: toIso(row.health_verified_at),
+    created_at: toIso(row.created_at) ?? ""
+  };
+}
+
+function toProjectBuildRun(row: {
+  id: string;
+  project_id: string;
+  branch_id: string;
+  graph_version_id: string;
+  execution_run_id: string | null;
+  status: ProjectBuildRun["status"];
+  model: string;
+  prompt_hash: string;
+  summary: string;
+  repository_url: string | null;
+  deployment_url: string | null;
+  failure_reason: string | null;
+  metadata: Record<string, unknown>;
+  triggered_by: string;
+  started_at: Date | string | null;
+  completed_at: Date | string | null;
+  created_at: Date | string;
+}): ProjectBuildRun {
+  return {
+    ...row,
+    started_at: toIso(row.started_at),
+    completed_at: toIso(row.completed_at),
+    created_at: toIso(row.created_at) ?? ""
+  };
+}
+
+function toProjectBuildFile(row: {
+  id: string;
+  build_run_id: string;
+  project_id: string;
+  path: string;
+  role: ProjectBuildFile["role"];
+  language: string | null;
+  content: string;
+  checksum: string;
+  byte_size: number;
+  metadata: Record<string, unknown>;
+  created_at: Date | string;
+}): ProjectBuildFile {
+  return {
+    ...row,
     created_at: toIso(row.created_at) ?? ""
   };
 }
@@ -2691,6 +2937,335 @@ export async function getRuntimeDeployments(
   return rows.map(toDeployment);
 }
 
+export async function getRuntimeBuildRuns(
+  userId: string,
+  projectRef = LEGACY_PROJECT_ID
+): Promise<ProjectBuildRun[]> {
+  const context = await getProjectContext(userId, projectRef);
+  const { rows } = await query<Parameters<typeof toProjectBuildRun>[0]>(
+    `
+      select id::text, project_id::text, branch_id::text, graph_version_id::text,
+             execution_run_id::text, status::text as status, model, prompt_hash,
+             summary, repository_url, deployment_url, failure_reason, metadata,
+             triggered_by::text, started_at, completed_at, created_at
+      from public.project_build_runs
+      where project_id = $1::uuid
+      order by created_at desc
+      limit 12
+    `,
+    [context.project.id]
+  );
+
+  return rows.map(toProjectBuildRun);
+}
+
+export async function getRuntimeBuildFiles(
+  userId: string,
+  projectRef: string,
+  buildRunId: string
+): Promise<ProjectBuildFile[]> {
+  const context = await getProjectContext(userId, projectRef);
+  const { rows } = await query<Parameters<typeof toProjectBuildFile>[0]>(
+    `
+      select id::text, build_run_id::text, project_id::text, path,
+             role::text as role, language, content, checksum, byte_size,
+             metadata, created_at
+      from public.project_build_files
+      where project_id = $1::uuid and build_run_id = $2::uuid
+      order by path
+    `,
+    [context.project.id, buildRunId]
+  );
+
+  return rows.map(toProjectBuildFile);
+}
+
+export async function getRuntimeBuildSnapshot(
+  userId: string,
+  projectRef = LEGACY_PROJECT_ID
+): Promise<ProjectBuildSnapshot> {
+  let runs: ProjectBuildRun[];
+
+  try {
+    runs = await getRuntimeBuildRuns(userId, projectRef);
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      /project_build_runs|project_build_files|does not exist/i.test(error.message)
+    ) {
+      return { runs: [], files: [] };
+    }
+    throw error;
+  }
+
+  const files = runs[0] ? await getRuntimeBuildFiles(userId, projectRef, runs[0].id) : [];
+
+  return { runs, files };
+}
+
+export async function createRuntimeProjectBuild(
+  userId: string,
+  projectRef: string,
+  input: {
+    apiKey?: string;
+    model?: string;
+    buildPrompt?: string;
+  }
+): Promise<ProjectBuildSnapshot> {
+  await ensureProjectBuildArtifactSchema();
+
+  const context = await getProjectContext(userId, projectRef);
+  const specs = await getRuntimeSpecs(userId, projectRef);
+  const activeSpecs = specs.filter((spec) => spec.active_revision_id);
+  const requestedModel = input.model?.trim() || DEFAULT_OPENAI_MODEL;
+  const requestedPromptHash = hashContent(
+    JSON.stringify({
+      project_id: context.project.id,
+      graph_version_id: context.project.active_graph_version_id,
+      model: requestedModel,
+      build_prompt: input.buildPrompt?.trim() || null,
+      active_revision_ids: activeSpecs.map((spec) => spec.active_revision_id)
+    })
+  );
+  const initialProviderState = providerState();
+
+  const buildRun = await withTransaction(async (client) => {
+    const { rows } = await client.query<Parameters<typeof toProjectBuildRun>[0]>(
+      `
+        insert into public.project_build_runs (
+          project_id,
+          branch_id,
+          graph_version_id,
+          status,
+          model,
+          prompt_hash,
+          metadata,
+          triggered_by,
+          started_at
+        )
+        values (
+          $1::uuid,
+          $2::uuid,
+          $3::uuid,
+          'generating'::public.project_build_status,
+          $4,
+          $5,
+          $6::jsonb,
+          $7::uuid,
+          now()
+        )
+        returning id::text, project_id::text, branch_id::text, graph_version_id::text,
+                  execution_run_id::text, status::text as status, model, prompt_hash,
+                  summary, repository_url, deployment_url, failure_reason, metadata,
+                  triggered_by::text, started_at, completed_at, created_at
+      `,
+      [
+        context.project.id,
+        context.branch.id,
+        context.project.active_graph_version_id,
+        requestedModel,
+        requestedPromptHash,
+        JSON.stringify({
+          key_persisted: false,
+          api_key_source: input.apiKey?.trim()
+            ? "request"
+            : process.env.OPENAI_API_KEY
+              ? "server"
+              : "missing",
+          provider_state: initialProviderState,
+          build_prompt: input.buildPrompt?.trim() || null
+        }),
+        userId
+      ]
+    );
+
+    await recordEvent(client, {
+      projectId: context.project.id,
+      branchId: context.branch.id,
+      actorId: userId,
+      eventType: "BuildStarted",
+      subsystem: "build",
+      affectedScope: {
+        build_run_id: rows[0].id,
+        graph_version_id: context.project.active_graph_version_id
+      },
+      sourceState: "queued",
+      targetState: "generating"
+    });
+
+    return toProjectBuildRun(rows[0]);
+  });
+
+  try {
+    const graphSummary = await getRuntimeGraphSummary(userId, projectRef);
+    const generated = await generateProjectBuild({
+      apiKey: input.apiKey,
+      model: requestedModel,
+      projectName: context.project.name,
+      projectId: context.project.id,
+      graphVersionId: context.project.active_graph_version_id,
+      specs,
+      graphSummary,
+      buildPrompt: input.buildPrompt
+    });
+    const status: ProjectBuildRun["status"] =
+      generated.providerState.github.status === "blocked"
+        ? "github_blocked"
+        : generated.providerState.vercel.status === "blocked"
+          ? "deploy_blocked"
+          : "generated";
+
+    return withTransaction(async (client) => {
+      const insertedFiles: ProjectBuildFile[] = [];
+      for (const file of generated.files) {
+        const { rows: fileRows } = await client.query<Parameters<typeof toProjectBuildFile>[0]>(
+          `
+            insert into public.project_build_files (
+              build_run_id,
+              project_id,
+              path,
+              role,
+              language,
+              content,
+              checksum,
+              byte_size,
+              metadata
+            )
+            values (
+              $1::uuid,
+              $2::uuid,
+              $3,
+              $4::public.project_build_file_role,
+              $5,
+              $6,
+              $7,
+              $8,
+              $9::jsonb
+            )
+            returning id::text, build_run_id::text, project_id::text, path,
+                      role::text as role, language, content, checksum, byte_size,
+                      metadata, created_at
+          `,
+          [
+            buildRun.id,
+            context.project.id,
+            file.path,
+            file.role,
+            file.language,
+            file.content,
+            file.checksum,
+            file.byteSize,
+            JSON.stringify({ generated_by: "openai_responses" })
+          ]
+        );
+        insertedFiles.push(toProjectBuildFile(fileRows[0]));
+      }
+
+      const { rows } = await client.query<Parameters<typeof toProjectBuildRun>[0]>(
+        `
+          update public.project_build_runs
+          set status = $2::public.project_build_status,
+              model = $3,
+              prompt_hash = $4,
+              summary = $5,
+              failure_reason = null,
+              completed_at = now(),
+              metadata = metadata || $6::jsonb
+          where id = $1::uuid
+          returning id::text, project_id::text, branch_id::text, graph_version_id::text,
+                    execution_run_id::text, status::text as status, model, prompt_hash,
+                    summary, repository_url, deployment_url, failure_reason, metadata,
+                    triggered_by::text, started_at, completed_at, created_at
+        `,
+        [
+          buildRun.id,
+          status,
+          generated.model,
+          generated.promptHash,
+          generated.summary,
+          JSON.stringify({
+            key_persisted: false,
+            file_count: generated.files.length,
+            provider_state: generated.providerState,
+            repository_export: {
+              status:
+                generated.providerState.github.status === "blocked" ? "blocked" : "not_run",
+              reason:
+                generated.providerState.github.reason ??
+                "GitHub export is configured but this build only generated the artifact bundle."
+            },
+            deployment: {
+              status:
+                generated.providerState.vercel.status === "blocked" ? "blocked" : "not_run",
+              reason:
+                generated.providerState.vercel.reason ??
+                "Vercel deployment is configured but this build only generated the artifact bundle."
+            }
+          })
+        ]
+      );
+
+      await recordEvent(client, {
+        projectId: context.project.id,
+        branchId: context.branch.id,
+        actorId: userId,
+        eventType: "BuildCompleted",
+        subsystem: "build",
+        affectedScope: {
+          build_run_id: buildRun.id,
+          file_count: generated.files.length,
+          status
+        },
+        sourceState: "generating",
+        targetState: status
+      });
+
+      return {
+        runs: [toProjectBuildRun(rows[0])],
+        files: insertedFiles
+      };
+    });
+  } catch (error) {
+    const failureReason =
+      error instanceof Error ? error.message : "Project build generation failed.";
+
+    await withTransaction(async (client) => {
+      await client.query(
+        `
+          update public.project_build_runs
+          set status = 'failed'::public.project_build_status,
+              failure_reason = $2,
+              completed_at = now(),
+              metadata = metadata || $3::jsonb
+          where id = $1::uuid
+        `,
+        [
+          buildRun.id,
+          failureReason,
+          JSON.stringify({
+            key_persisted: false,
+            failure_code: failureReason
+          })
+        ]
+      );
+
+      await recordEvent(client, {
+        projectId: context.project.id,
+        branchId: context.branch.id,
+        actorId: userId,
+        eventType: "BuildFailed",
+        subsystem: "build",
+        affectedScope: { build_run_id: buildRun.id },
+        sourceState: "generating",
+        targetState: "failed",
+        metadata: { failure_reason: failureReason }
+      });
+    });
+
+    throw error;
+  }
+}
+
 export async function getRuntimeValidationGroups(
   userId: string,
   projectRef = LEGACY_PROJECT_ID
@@ -2875,6 +3450,7 @@ export async function getRuntimeHomeData(
     tasks,
     reconciliations,
     deployments,
+    builds,
     notifications,
     events
   ] = await Promise.all([
@@ -2889,6 +3465,7 @@ export async function getRuntimeHomeData(
     getRuntimeTasks(userId, projectRef),
     getRuntimeReconciliations(userId, projectRef),
     getRuntimeDeployments(userId, projectRef),
+    getRuntimeBuildSnapshot(userId, projectRef),
     getRuntimeNotifications(userId, projectRef),
     getRuntimeEvents(userId, projectRef)
   ]);
@@ -2905,6 +3482,7 @@ export async function getRuntimeHomeData(
     tasks,
     reconciliations,
     deployments,
+    builds,
     notifications,
     events
   };

@@ -213,6 +213,55 @@ export type DeploymentRecord = {
   created_at: string;
 };
 
+export type ProjectBuildStatus =
+  | "queued"
+  | "generating"
+  | "generated"
+  | "github_blocked"
+  | "deploy_blocked"
+  | "failed";
+
+export type ProjectBuildFileRole = "source" | "config" | "test" | "doc" | "asset";
+
+export type ProjectBuildRun = {
+  id: string;
+  project_id: string;
+  branch_id: string;
+  graph_version_id: string;
+  execution_run_id: string | null;
+  status: ProjectBuildStatus;
+  model: string;
+  prompt_hash: string;
+  summary: string;
+  repository_url: string | null;
+  deployment_url: string | null;
+  failure_reason: string | null;
+  metadata: Record<string, unknown>;
+  triggered_by: string;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+};
+
+export type ProjectBuildFile = {
+  id: string;
+  build_run_id: string;
+  project_id: string;
+  path: string;
+  role: ProjectBuildFileRole;
+  language: string | null;
+  content: string;
+  checksum: string;
+  byte_size: number;
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
+
+export type ProjectBuildSnapshot = {
+  runs: ProjectBuildRun[];
+  files: ProjectBuildFile[];
+};
+
 export type NotificationRecord = {
   id: string;
   workspace_id: string;
@@ -346,6 +395,7 @@ export type RuntimeHomeData = {
   tasks: ExecutionTask[];
   reconciliations: ReconciliationAttempt[];
   deployments: DeploymentRecord[];
+  builds: ProjectBuildSnapshot;
   notifications: NotificationRecord[];
   events: EventRecord[];
 };
