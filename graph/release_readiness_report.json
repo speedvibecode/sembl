@@ -1,7 +1,7 @@
 {
   "schema_version": "sembl.v4_3.release_readiness_report.v1",
-  "generated_at": "2026-06-03T10:25:00.000Z",
-  "status": "in_progress_pending_production_deployment",
+  "generated_at": "2026-06-03T10:38:00.000Z",
+  "status": "deployed_pending_authenticated_factory_e2e",
   "evidence": {
     "graph_validation": {
       "status": "passed",
@@ -68,6 +68,19 @@
         "dark/bright auth shell desktop",
         "dark/bright auth shell mobile"
       ]
+    },
+    "production_deployment": {
+      "status": "passed",
+      "commit": "fb3b437",
+      "deployment_id": "dpl_CV1wFuVTT9JjuaorWsdmj2gEDwFn",
+      "url": "https://sembl-gct2pqali-speedvibecodes-projects.vercel.app",
+      "alias": "https://sembl.vercel.app",
+      "verification": [
+        "Vercel inspect status Ready",
+        "GET / returned 200 in Vercel logs",
+        "GET /api/v1/projects returned 401 without session",
+        "Production desktop auth screenshot rendered"
+      ]
     }
   },
   "release_notes": [
@@ -80,8 +93,6 @@
   ],
   "remaining_gates": [
     "Run authenticated project factory E2E with real SEMBL_E2E_EMAIL and SEMBL_E2E_PASSWORD.",
-    "Deploy to Vercel production.",
-    "Smoke test https://sembl.vercel.app after deployment.",
     "Enable Supabase Auth leaked password protection in the Supabase dashboard."
   ]
 }

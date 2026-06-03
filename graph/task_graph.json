@@ -286,8 +286,8 @@
       "execution_boundary": null,
       "expected_outputs": ["Release readiness report with validation, service, UI, persistence, and deployment status."],
       "validation_gates": ["graph_valid", "api_valid", "db_valid", "ui_valid", "services_valid", "deployment_ready"],
-      "status": "in_progress",
-      "blocker": "Production deployment and authenticated workflow smoke test are still pending for this rebuild.",
+      "status": "deployed_pending_authenticated_e2e",
+      "blocker": "Production deployment and unauthenticated smoke test passed; authenticated factory workflow E2E still requires SEMBL_E2E_EMAIL and SEMBL_E2E_PASSWORD.",
       "packet": "graph/task-packets/task.12_release_readiness.json"
     }
   ],
