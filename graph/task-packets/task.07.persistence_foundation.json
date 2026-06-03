@@ -7,6 +7,11 @@
   "inputs": ["graph/normalized_graph.json", "sembl_docs/db_schema.md", "sembl_docs/techarch.md"],
   "outputs": ["Supabase migrations", "RLS policies", "advisor report"],
   "acceptance": ["Migrations apply cleanly to fresh isolated Supabase state.", "RLS is enabled for exposed schemas.", "Immutable graph/event records cannot update/delete.", "Advisors are reviewed."],
-  "current_status": "blocked",
-  "blocker": "Requires `graph/service_preflight.json` to record existing Supabase project takeover reset as complete and verified before any Supabase-backed build work starts."
+  "current_status": "completed",
+  "evidence": [
+    "Supabase takeover reset is complete in graph/service_preflight.json.",
+    "Remote migrations applied through 20260603101511_v43_project_factory_hardening.",
+    "Seed workspace auto-ownership trigger/function were removed and verified absent.",
+    "Supabase advisors reviewed; remaining security warning is Auth leaked-password protection, which is a dashboard Auth setting outside schema migration control."
+  ]
 }

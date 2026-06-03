@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import type { PoolClient } from "pg";
-import { ensureSeedWorkspaceMembership } from "./auth";
 import { query, toIso, withTransaction } from "./db";
 import type {
   Approval,
@@ -14,6 +13,8 @@ import type {
   GraphPayload,
   GraphVersion,
   NotificationRecord,
+  ProjectDirectory,
+  ProjectDirectoryProject,
   ProjectSnapshot,
   ReconciliationAttempt,
   RuntimeHomeData,
@@ -47,16 +48,15 @@ const SPEC_TYPES: SpecificationType[] = [
 ];
 
 const navigation = {
-  global_navigation: ["Workspace Home", "Activity Center", "Workspace Settings"],
+  global_navigation: ["Workspace Home", "Approval Center", "Activity Center", "Workspace Settings"],
   project_navigation: [
-    "Specs",
-    "Graph",
-    "Validation",
+    "Project Overview",
+    "Specifications",
     "Execution",
-    "Reconciliation",
+    "Changes",
     "Deployments"
   ],
-  contextual_navigation: ["Settings"]
+  contextual_navigation: ["Graph Explorer", "Validation", "Reconciliation", "Settings"]
 };
 
 function assertSpecType(value: string): SpecificationType {
@@ -76,6 +76,233 @@ function projectFilter(ref: string) {
     sql: "(p.id::text = $1 or p.slug = $1 or ($1 = $3 and p.slug = $2))",
     params: [ref, SEED_PROJECT_SLUG, LEGACY_PROJECT_ID]
   };
+}
+
+function slugify(value: string) {
+  const slug = value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+
+  return slug || "project";
+}
+
+async function nextWorkspaceSlug(client: PoolClient, base: string) {
+  const root = slugify(base === "project" ? "workspace" : base);
+  for (let suffix = 0; suffix < 50; suffix += 1) {
+    const slug = suffix === 0 ? root : `${root}-${suffix + 1}`;
+    const { rows } = await client.query<{ exists: boolean }>(
+      "select exists(select 1 from public.workspaces where slug = $1) as exists",
+      [slug]
+    );
+    if (!rows[0]?.exists) return slug;
+  }
+
+  throw new Error("workspace_slug_unavailable");
+}
+
+async function nextProjectSlug(client: PoolClient, workspaceId: string, base: string) {
+  const root = slugify(base);
+  for (let suffix = 0; suffix < 50; suffix += 1) {
+    const slug = suffix === 0 ? root : `${root}-${suffix + 1}`;
+    const { rows } = await client.query<{ exists: boolean }>(
+      `
+        select exists(
+          select 1 from public.projects
+          where workspace_id = $1::uuid and slug = $2
+        ) as exists
+      `,
+      [workspaceId, slug]
+    );
+    if (!rows[0]?.exists) return slug;
+  }
+
+  throw new Error("project_slug_unavailable");
+}
+
+function starterSpecContent(specType: SpecificationType, projectName: string, brief?: string) {
+  const intro = brief?.trim()
+    ? `Project brief: ${brief.trim()}`
+    : "Project brief: describe the product, users, core workflow, data, integrations, and deployment target.";
+  const title = specType.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+
+  return [
+    `# ${title} - ${projectName}`,
+    "",
+    intro,
+    "",
+    "## Intent",
+    "- Capture the user-visible outcome this project must produce.",
+    "- Keep decisions specific enough to compile into graph nodes and execution boundaries.",
+    "",
+    "## Required Behavior",
+    "- Define the durable backend state this project needs.",
+    "- Define the primary user workflow from empty state to completed work.",
+    "- Define validation, failure, and reconciliation behavior.",
+    "",
+    "## Acceptance",
+    "- No simulated success state.",
+    "- Every mutation persists to Supabase.",
+    "- The graph and task DAG are derived from the published specification state."
+  ].join("\n");
+}
+
+type ActiveSpecRevisionRow = {
+  id: string;
+  spec_type: SpecificationType;
+  content: string;
+  revision_number: number;
+};
+
+function compactContent(value: string) {
+  return value.replace(/\s+/g, " ").trim().slice(0, 240);
+}
+
+function initialGraphTemplates(revisions: ActiveSpecRevisionRow[], projectName: string) {
+  const nodes: Array<{
+    key: string;
+    node_type: GraphNode["node_type"];
+    name: string;
+    payload: Record<string, unknown>;
+    source_spec_type: SpecificationType | null;
+    source_revision_id: string | null;
+  }> = [
+    {
+      key: "project-intent",
+      node_type: "entity",
+      name: `${projectName} Intent`,
+      payload: {
+        purpose: "Canonical product intent compiled from published specifications.",
+        compiled_from: revisions.map((revision) => revision.id)
+      },
+      source_spec_type: revisions[0]?.spec_type ?? null,
+      source_revision_id: revisions[0]?.id ?? null
+    },
+    {
+      key: "specification-primacy",
+      node_type: "invariant",
+      name: "Specification Primacy",
+      payload: {
+        rule: "Published specs are the only authoring source for graph and execution changes."
+      },
+      source_spec_type: null,
+      source_revision_id: null
+    },
+    {
+      key: "spec-to-execution",
+      node_type: "flow",
+      name: "Spec To Execution Workflow",
+      payload: {
+        stages: ["draft", "publish", "compile", "validate", "approve", "execute", "reconcile"]
+      },
+      source_spec_type: null,
+      source_revision_id: null
+    },
+    {
+      key: "plan-boundary",
+      node_type: "execution_boundary",
+      name: "Plan Build",
+      payload: {
+        dependency_scope: "Convert published specification intent into an implementation plan and task DAG."
+      },
+      source_spec_type: null,
+      source_revision_id: null
+    },
+    {
+      key: "implement-boundary",
+      node_type: "execution_boundary",
+      name: "Implement Build",
+      payload: {
+        dependency_scope: "Apply code, schema, and configuration changes derived from graph state."
+      },
+      source_spec_type: null,
+      source_revision_id: null
+    },
+    {
+      key: "validate-boundary",
+      node_type: "execution_boundary",
+      name: "Validate And Reconcile Build",
+      payload: {
+        dependency_scope: "Run validation, reconcile outputs into graph state, and record deployment evidence."
+      },
+      source_spec_type: null,
+      source_revision_id: null
+    }
+  ];
+
+  for (const revision of revisions) {
+    nodes.push({
+      key: `spec-${revision.spec_type}`,
+      node_type: revision.spec_type === "api_spec" ? "interface" : "entity",
+      name: `${revision.spec_type.replaceAll("_", " ")} Revision ${revision.revision_number}`,
+      payload: {
+        summary: compactContent(revision.content),
+        revision_id: revision.id,
+        spec_type: revision.spec_type
+      },
+      source_spec_type: revision.spec_type,
+      source_revision_id: revision.id
+    });
+  }
+
+  const edges: Array<{
+    edge_type: GraphEdge["edge_type"];
+    source_key: string;
+    target_key: string;
+    metadata: Record<string, unknown>;
+  }> = [
+    {
+      edge_type: "owns",
+      source_key: "project-intent",
+      target_key: "spec-to-execution",
+      metadata: { source: "initial_compile" }
+    },
+    {
+      edge_type: "implements",
+      source_key: "spec-to-execution",
+      target_key: "plan-boundary",
+      metadata: { order: 1 }
+    },
+    {
+      edge_type: "precedes",
+      source_key: "plan-boundary",
+      target_key: "implement-boundary",
+      metadata: { order: 2 }
+    },
+    {
+      edge_type: "precedes",
+      source_key: "implement-boundary",
+      target_key: "validate-boundary",
+      metadata: { order: 3 }
+    },
+    {
+      edge_type: "dependency",
+      source_key: "specification-primacy",
+      target_key: "spec-to-execution",
+      metadata: { invariant: true }
+    }
+  ];
+
+  for (const revision of revisions) {
+    edges.push(
+      {
+        edge_type: "dependency",
+        source_key: `spec-${revision.spec_type}`,
+        target_key: "project-intent",
+        metadata: { spec_type: revision.spec_type }
+      },
+      {
+        edge_type: "implements",
+        source_key: `spec-${revision.spec_type}`,
+        target_key: "plan-boundary",
+        metadata: { spec_type: revision.spec_type }
+      }
+    );
+  }
+
+  return { nodes, edges };
 }
 
 function toGraphVersion(row: {
@@ -386,7 +613,6 @@ export async function getProjectContext(
   userId: string,
   projectRef = LEGACY_PROJECT_ID
 ): Promise<ProjectContext> {
-  await ensureSeedWorkspaceMembership(userId);
   const filter = projectFilter(projectRef);
   const { rows } = await query<{
     workspace_id: string;
@@ -468,6 +694,298 @@ export async function getProjectContext(
       role: row.role
     }
   };
+}
+
+export async function getRuntimeProjectDirectory(userId: string): Promise<ProjectDirectory> {
+  const { rows } = await query<{
+    workspace_id: string;
+    workspace_name: string;
+    workspace_slug: string;
+    role: WorkspaceRole;
+    project_id: string | null;
+    project_name: string | null;
+    project_slug: string | null;
+    lifecycle_state: string | null;
+    operational_mode: string | null;
+    active_graph_version_id: string | null;
+    updated_at: Date | string | null;
+    specifications: number | null;
+    graph_versions: number | null;
+    execution_runs: number | null;
+  }>(
+    `
+      select
+        w.id::text as workspace_id,
+        w.name as workspace_name,
+        w.slug as workspace_slug,
+        wm.role::text as role,
+        p.id::text as project_id,
+        p.name as project_name,
+        p.slug as project_slug,
+        p.lifecycle_state::text as lifecycle_state,
+        p.operational_mode::text as operational_mode,
+        p.active_graph_version_id::text,
+        p.updated_at,
+        (
+          select count(*)::int
+          from public.specification_documents sd
+          where sd.project_id = p.id
+        ) as specifications,
+        (
+          select count(*)::int
+          from public.graph_versions gv
+          where gv.project_id = p.id
+        ) as graph_versions,
+        (
+          select count(*)::int
+          from public.execution_runs er
+          where er.project_id = p.id
+        ) as execution_runs
+      from public.workspace_members wm
+      join public.workspaces w on w.id = wm.workspace_id
+      left join public.projects p on p.workspace_id = w.id
+      where wm.user_id = $1::uuid
+      order by w.created_at asc, p.updated_at desc nulls last
+    `,
+    [userId]
+  );
+
+  const workspaceMap = new Map<string, ProjectDirectory["workspaces"][number]>();
+  const projects: ProjectDirectoryProject[] = [];
+
+  for (const row of rows) {
+    const workspace =
+      workspaceMap.get(row.workspace_id) ??
+      ({
+        id: row.workspace_id,
+        name: row.workspace_name,
+        slug: row.workspace_slug,
+        role: row.role,
+        projects: []
+      } satisfies ProjectDirectory["workspaces"][number]);
+
+    workspaceMap.set(row.workspace_id, workspace);
+
+    if (!row.project_id || !row.project_name || !row.project_slug) {
+      continue;
+    }
+
+    const project: ProjectDirectoryProject = {
+      id: row.project_id,
+      workspace_id: row.workspace_id,
+      name: row.project_name,
+      slug: row.project_slug,
+      lifecycle_state: row.lifecycle_state ?? "draft",
+      operational_mode: row.operational_mode ?? "documentation",
+      active_graph_version_id: row.active_graph_version_id,
+      updated_at: toIso(row.updated_at) ?? "",
+      counts: {
+        specifications: row.specifications ?? 0,
+        graph_versions: row.graph_versions ?? 0,
+        execution_runs: row.execution_runs ?? 0
+      }
+    };
+
+    workspace.projects.push(project);
+    projects.push(project);
+  }
+
+  return {
+    workspaces: [...workspaceMap.values()],
+    projects
+  };
+}
+
+export async function createRuntimeProject(
+  userId: string,
+  input: {
+    name: string;
+    brief?: string;
+    workspaceId?: string;
+    workspaceName?: string;
+  }
+): Promise<ProjectDirectoryProject> {
+  const name = input.name.trim();
+  if (!name) {
+    throw new Error("project_name_required");
+  }
+
+  return withTransaction(async (client) => {
+    let workspaceId = input.workspaceId ?? null;
+
+    if (workspaceId) {
+      const { rows } = await client.query<{ role: WorkspaceRole }>(
+        `
+          select role::text as role
+          from public.workspace_members
+          where workspace_id = $1::uuid and user_id = $2::uuid
+          limit 1
+        `,
+        [workspaceId, userId]
+      );
+      const role = rows[0]?.role;
+      if (!role || !["owner", "admin", "member"].includes(role)) {
+        throw new Error("forbidden");
+      }
+    } else {
+      const { rows } = await client.query<{ workspace_id: string }>(
+        `
+          select workspace_id::text
+          from public.workspace_members
+          where user_id = $1::uuid
+          order by
+            case role
+              when 'owner' then 1
+              when 'admin' then 2
+              when 'member' then 3
+              else 4
+            end,
+            joined_at
+          limit 1
+        `,
+        [userId]
+      );
+      workspaceId = rows[0]?.workspace_id ?? null;
+    }
+
+    if (!workspaceId) {
+      const workspaceName = input.workspaceName?.trim() || "My Workspace";
+      const workspaceSlug = await nextWorkspaceSlug(client, workspaceName);
+      const { rows: workspaceRows } = await client.query<{ id: string }>(
+        `
+          insert into public.workspaces (name, slug)
+          values ($1, $2)
+          returning id::text
+        `,
+        [workspaceName, workspaceSlug]
+      );
+      workspaceId = workspaceRows[0].id;
+
+      await client.query(
+        `
+          insert into public.workspace_members (workspace_id, user_id, role)
+          values ($1::uuid, $2::uuid, 'owner'::public.workspace_role)
+          on conflict (workspace_id, user_id) do update set role = excluded.role
+        `,
+        [workspaceId, userId]
+      );
+    }
+
+    const projectSlug = await nextProjectSlug(client, workspaceId, name);
+    const { rows: projectRows } = await client.query<{
+      id: string;
+      workspace_id: string;
+      name: string;
+      slug: string;
+      lifecycle_state: string;
+      operational_mode: string;
+      updated_at: Date | string;
+    }>(
+      `
+        insert into public.projects (workspace_id, name, slug, created_by)
+        values ($1::uuid, $2, $3, $4::uuid)
+        returning id::text, workspace_id::text, name, slug,
+                  lifecycle_state::text, operational_mode::text, updated_at
+      `,
+      [workspaceId, name, projectSlug, userId]
+    );
+    const project = projectRows[0];
+
+    const { rows: graphRows } = await client.query<{ id: string }>(
+      `
+        insert into public.graph_versions (project_id, version_number)
+        values ($1::uuid, 0)
+        returning id::text
+      `,
+      [project.id]
+    );
+    const graphVersionId = graphRows[0].id;
+
+    const { rows: branchRows } = await client.query<{ id: string }>(
+      `
+        insert into public.branches (project_id, name, base_graph_version_id, created_by)
+        values ($1::uuid, 'main', $2::uuid, $3::uuid)
+        returning id::text
+      `,
+      [project.id, graphVersionId, userId]
+    );
+    const branchId = branchRows[0].id;
+
+    await client.query(
+      `
+        update public.projects
+        set active_branch_id = $2::uuid,
+            active_graph_version_id = $3::uuid,
+            updated_at = now()
+        where id = $1::uuid
+      `,
+      [project.id, branchId, graphVersionId]
+    );
+
+    for (const specType of SPEC_TYPES) {
+      await client.query(
+        `
+          insert into public.specification_documents (
+            project_id,
+            spec_type,
+            draft_content,
+            draft_updated_at
+          )
+          values ($1::uuid, $2::public.specification_type, $3, now())
+        `,
+        [project.id, specType, starterSpecContent(specType, name, input.brief)]
+      );
+    }
+
+    await recordEvent(client, {
+      projectId: project.id,
+      branchId,
+      actorId: userId,
+      eventType: "ProjectCreated",
+      subsystem: "project",
+      affectedScope: { project_id: project.id, workspace_id: workspaceId },
+      targetState: "draft",
+      metadata: { source: "software_factory_launcher" }
+    });
+
+    await client.query(
+      `
+        insert into public.notifications (
+          workspace_id,
+          project_id,
+          recipient_user_id,
+          severity,
+          title,
+          body
+        )
+        values (
+          $1::uuid,
+          $2::uuid,
+          $3::uuid,
+          'info'::public.notification_severity,
+          'Project factory initialized',
+          'Starter specification drafts, a main branch, and base graph version were created.'
+        )
+      `,
+      [workspaceId, project.id, userId]
+    );
+
+    return {
+      id: project.id,
+      workspace_id: project.workspace_id,
+      name: project.name,
+      slug: project.slug,
+      lifecycle_state: project.lifecycle_state,
+      operational_mode: project.operational_mode,
+      active_graph_version_id: graphVersionId,
+      updated_at: toIso(project.updated_at) ?? "",
+      counts: {
+        specifications: SPEC_TYPES.length,
+        graph_versions: 1,
+        execution_runs: 0
+      }
+    };
+  });
 }
 
 export async function getRuntimeProjectSnapshot(
@@ -599,17 +1117,20 @@ export async function saveSpecDraft(
     updated_at: Date | string;
   }>(
     `
-      update public.specification_documents sd
-      set draft_content = $3,
-          draft_updated_at = now(),
-          updated_at = now()
-      from public.specification_revisions sr
-      where sd.active_revision_id = sr.id
-        and sd.project_id = $1::uuid
-        and sd.spec_type = $2::public.specification_type
-      returning sd.id::text, sd.project_id::text, sd.spec_type::text as spec_type,
-                sd.active_revision_id::text, sr.revision_number as active_revision_number,
-                sr.content as active_content, sd.draft_content, sd.draft_updated_at, sd.updated_at
+      with updated as (
+        update public.specification_documents
+        set draft_content = $3,
+            draft_updated_at = now(),
+            updated_at = now()
+        where project_id = $1::uuid
+          and spec_type = $2::public.specification_type
+        returning id, project_id, spec_type, active_revision_id, draft_content, draft_updated_at, updated_at
+      )
+      select updated.id::text, updated.project_id::text, updated.spec_type::text as spec_type,
+             updated.active_revision_id::text, sr.revision_number as active_revision_number,
+             sr.content as active_content, updated.draft_content, updated.draft_updated_at, updated.updated_at
+      from updated
+      left join public.specification_revisions sr on sr.id = updated.active_revision_id
     `,
     [context.project.id, specType, content]
   );
@@ -637,7 +1158,7 @@ export async function publishSpecRevision(
   userId: string,
   projectRef: string,
   specTypeInput: string,
-  content: string
+  content?: string
 ): Promise<{ spec: SpecificationDraft; revision: SpecificationRevision; validation: ValidationGroup }> {
   const specType = assertSpecType(specTypeInput);
   const context = await getProjectContext(userId, projectRef);
@@ -646,11 +1167,19 @@ export async function publishSpecRevision(
     const { rows: docRows } = await client.query<{
       id: string;
       active_revision_id: string | null;
+      draft_content: string | null;
+      active_content: string | null;
+      active_content_hash: string | null;
+      active_revision_number: number | null;
+      active_created_at: Date | string | null;
     }>(
       `
-        select id::text, active_revision_id::text
-        from public.specification_documents
-        where project_id = $1::uuid and spec_type = $2::public.specification_type
+        select sd.id::text, sd.active_revision_id::text, sd.draft_content,
+               sr.content as active_content, sr.content_hash as active_content_hash,
+               sr.revision_number as active_revision_number, sr.created_at as active_created_at
+        from public.specification_documents sd
+        left join public.specification_revisions sr on sr.id = sd.active_revision_id
+        where sd.project_id = $1::uuid and sd.spec_type = $2::public.specification_type
         for update
       `,
       [context.project.id, specType]
@@ -659,6 +1188,61 @@ export async function publishSpecRevision(
     const doc = docRows[0];
     if (!doc) {
       throw new Error("spec_not_found");
+    }
+    const publishContent = content ?? doc.draft_content;
+    if (!publishContent?.trim()) {
+      throw new Error("draft_required");
+    }
+    const publishHash = hashContent(publishContent);
+
+    if (doc.active_revision_id && publishHash === doc.active_content_hash) {
+      await client.query(
+        `
+          update public.specification_documents
+          set draft_content = null,
+              draft_updated_at = null,
+              updated_at = now()
+          where id = $1::uuid
+        `,
+        [doc.id]
+      );
+
+      const validation = await createValidationGroup(client, {
+        projectId: context.project.id,
+        branchId: context.branch.id,
+        targetType: "specification",
+        targetId: doc.active_revision_id,
+        eventId: null
+      });
+
+      const revision: SpecificationRevision = {
+        id: doc.active_revision_id,
+        document_id: doc.id,
+        project_id: context.project.id,
+        revision_number: doc.active_revision_number ?? 1,
+        content: doc.active_content ?? publishContent,
+        content_hash: doc.active_content_hash,
+        authored_by: userId,
+        parent_revision_id: null,
+        created_at: toIso(doc.active_created_at) ?? new Date().toISOString()
+      };
+
+      return {
+        spec: {
+          id: doc.id,
+          project_id: context.project.id,
+          spec_type: specType,
+          active_revision_id: doc.active_revision_id,
+          active_revision_number: revision.revision_number,
+          active_content: revision.content,
+          draft_content: revision.content,
+          draft_updated_at: null,
+          updated_at: new Date().toISOString(),
+          is_dirty: false
+        },
+        revision,
+        validation
+      };
     }
 
     const { rows: numberRows } = await client.query<{ next_revision: number }>(
@@ -699,8 +1283,8 @@ export async function publishSpecRevision(
         doc.id,
         context.project.id,
         numberRows[0]?.next_revision ?? 1,
-        content,
-        hashContent(content),
+        publishContent,
+        publishHash,
         userId,
         doc.active_revision_id
       ]
@@ -722,12 +1306,12 @@ export async function publishSpecRevision(
       `
         update public.specification_documents
         set active_revision_id = $2::uuid,
-            draft_content = $3,
-            draft_updated_at = now(),
+            draft_content = null,
+            draft_updated_at = null,
             updated_at = now()
         where id = $1::uuid
       `,
-      [doc.id, revision.id, content]
+      [doc.id, revision.id]
     );
 
     const validation = await createValidationGroup(client, {
@@ -754,9 +1338,9 @@ export async function publishSpecRevision(
         spec_type: specType,
         active_revision_id: revision.id,
         active_revision_number: revision.revision_number,
-        active_content: content,
-        draft_content: content,
-        draft_updated_at: new Date().toISOString(),
+        active_content: publishContent,
+        draft_content: publishContent,
+        draft_updated_at: null,
         updated_at: new Date().toISOString(),
         is_dirty: false
       },
@@ -998,18 +1582,20 @@ export async function compileGraphFromSpecs(
   const context = await getProjectContext(userId, projectRef);
 
   return withTransaction(async (client) => {
-    const { rows: revisionRows } = await client.query<{ id: string }>(
+    const { rows: revisionRows } = await client.query<ActiveSpecRevisionRow>(
       `
-        select sr.id::text
+        select sr.id::text,
+               sd.spec_type::text as spec_type,
+               sr.content,
+               sr.revision_number
         from public.specification_documents sd
         join public.specification_revisions sr on sr.id = sd.active_revision_id
         where sd.project_id = $1::uuid
-        order by sr.created_at desc
-        limit 1
+        order by array_position($2::text[], sd.spec_type::text), sd.spec_type::text
       `,
-      [context.project.id]
+      [context.project.id, SPEC_TYPES]
     );
-    const latestRevisionId = revisionRows[0]?.id;
+    const latestRevisionId = revisionRows[revisionRows.length - 1]?.id;
     if (!latestRevisionId) {
       throw new Error("specification_required");
     }
@@ -1071,94 +1657,171 @@ export async function compileGraphFromSpecs(
     );
 
     const nodeMap = new Map<string, string>();
-    for (const node of sourceNodes) {
-      const { rows: insertedNodes } = await client.query<{ id: string }>(
-        `
-          insert into public.graph_nodes (
-            project_id,
-            graph_version_id,
-            node_type,
-            name,
-            payload,
-            source_spec_type,
-            source_revision_id
-          )
-          values (
-            $1::uuid,
-            $2::uuid,
-            $3::public.graph_node_type,
-            $4,
-            $5::jsonb,
-            $6::public.specification_type,
-            coalesce($7::uuid, $8::uuid)
-          )
-          returning id::text
-        `,
-        [
-          context.project.id,
-          graphVersion.id,
-          node.node_type,
-          node.name,
-          JSON.stringify({
-            ...node.payload,
-            compiled_from_node_id: node.id,
-            compiled_at: new Date().toISOString()
-          }),
-          node.source_spec_type,
-          node.source_revision_id,
-          latestRevisionId
-        ]
-      );
+    if (sourceNodes.length) {
+      for (const node of sourceNodes) {
+        const { rows: insertedNodes } = await client.query<{ id: string }>(
+          `
+            insert into public.graph_nodes (
+              project_id,
+              graph_version_id,
+              node_type,
+              name,
+              payload,
+              source_spec_type,
+              source_revision_id
+            )
+            values (
+              $1::uuid,
+              $2::uuid,
+              $3::public.graph_node_type,
+              $4,
+              $5::jsonb,
+              $6::public.specification_type,
+              coalesce($7::uuid, $8::uuid)
+            )
+            returning id::text
+          `,
+          [
+            context.project.id,
+            graphVersion.id,
+            node.node_type,
+            node.name,
+            JSON.stringify({
+              ...node.payload,
+              compiled_from_node_id: node.id,
+              compiled_at: new Date().toISOString()
+            }),
+            node.source_spec_type,
+            node.source_revision_id,
+            latestRevisionId
+          ]
+        );
 
-      nodeMap.set(node.id, insertedNodes[0].id);
-    }
-
-    const { rows: sourceEdges } = await client.query<{
-      edge_type: GraphEdge["edge_type"];
-      source_node_id: string;
-      target_node_id: string;
-      metadata: Record<string, unknown>;
-    }>(
-      `
-        select edge_type::text as edge_type, source_node_id::text, target_node_id::text, metadata
-        from public.graph_edges
-        where graph_version_id = $1::uuid
-      `,
-      [context.project.active_graph_version_id]
-    );
-
-    for (const edge of sourceEdges) {
-      const sourceNodeId = nodeMap.get(edge.source_node_id);
-      const targetNodeId = nodeMap.get(edge.target_node_id);
-      if (!sourceNodeId || !targetNodeId) {
-        continue;
+        nodeMap.set(node.id, insertedNodes[0].id);
       }
 
-      await client.query(
+      const { rows: sourceEdges } = await client.query<{
+        edge_type: GraphEdge["edge_type"];
+        source_node_id: string;
+        target_node_id: string;
+        metadata: Record<string, unknown>;
+      }>(
         `
-          insert into public.graph_edges (
-            project_id,
-            graph_version_id,
-            edge_type,
-            source_node_id,
-            target_node_id,
-            metadata
-          )
-          values ($1::uuid, $2::uuid, $3::public.graph_edge_type, $4::uuid, $5::uuid, $6::jsonb)
+          select edge_type::text as edge_type, source_node_id::text, target_node_id::text, metadata
+          from public.graph_edges
+          where graph_version_id = $1::uuid
         `,
-        [
-          context.project.id,
-          graphVersion.id,
-          edge.edge_type,
-          sourceNodeId,
-          targetNodeId,
-          JSON.stringify({
-            ...edge.metadata,
-            compiled_from_source_node_id: edge.source_node_id,
-            compiled_from_target_node_id: edge.target_node_id
-          })
-        ]
+        [context.project.active_graph_version_id]
       );
+
+      for (const edge of sourceEdges) {
+        const sourceNodeId = nodeMap.get(edge.source_node_id);
+        const targetNodeId = nodeMap.get(edge.target_node_id);
+        if (!sourceNodeId || !targetNodeId) {
+          continue;
+        }
+
+        await client.query(
+          `
+            insert into public.graph_edges (
+              project_id,
+              graph_version_id,
+              edge_type,
+              source_node_id,
+              target_node_id,
+              metadata
+            )
+            values ($1::uuid, $2::uuid, $3::public.graph_edge_type, $4::uuid, $5::uuid, $6::jsonb)
+          `,
+          [
+            context.project.id,
+            graphVersion.id,
+            edge.edge_type,
+            sourceNodeId,
+            targetNodeId,
+            JSON.stringify({
+              ...edge.metadata,
+              compiled_from_source_node_id: edge.source_node_id,
+              compiled_from_target_node_id: edge.target_node_id
+            })
+          ]
+        );
+      }
+    } else {
+      const templates = initialGraphTemplates(revisionRows, context.project.name);
+      for (const node of templates.nodes) {
+        const { rows: insertedNodes } = await client.query<{ id: string }>(
+          `
+            insert into public.graph_nodes (
+              project_id,
+              graph_version_id,
+              node_type,
+              name,
+              payload,
+              source_spec_type,
+              source_revision_id
+            )
+            values (
+              $1::uuid,
+              $2::uuid,
+              $3::public.graph_node_type,
+              $4,
+              $5::jsonb,
+              $6::public.specification_type,
+              $7::uuid
+            )
+            returning id::text
+          `,
+          [
+            context.project.id,
+            graphVersion.id,
+            node.node_type,
+            node.name,
+            JSON.stringify({
+              ...node.payload,
+              compiled_at: new Date().toISOString(),
+              generated_from_specs: true
+            }),
+            node.source_spec_type,
+            node.source_revision_id
+          ]
+        );
+
+        nodeMap.set(node.key, insertedNodes[0].id);
+      }
+
+      for (const edge of templates.edges) {
+        const sourceNodeId = nodeMap.get(edge.source_key);
+        const targetNodeId = nodeMap.get(edge.target_key);
+        if (!sourceNodeId || !targetNodeId) {
+          continue;
+        }
+
+        await client.query(
+          `
+            insert into public.graph_edges (
+              project_id,
+              graph_version_id,
+              edge_type,
+              source_node_id,
+              target_node_id,
+              metadata
+            )
+            values ($1::uuid, $2::uuid, $3::public.graph_edge_type, $4::uuid, $5::uuid, $6::jsonb)
+          `,
+          [
+            context.project.id,
+            graphVersion.id,
+            edge.edge_type,
+            sourceNodeId,
+            targetNodeId,
+            JSON.stringify({
+              ...edge.metadata,
+              generated_from_specs: true
+            })
+          ]
+        );
+      }
     }
 
     const proposedEventId = await recordEvent(client, {
@@ -1211,7 +1874,7 @@ export async function compileGraphFromSpecs(
           $4::jsonb,
           $5::jsonb,
           $6::uuid,
-          now() + interval '7 days'
+          now() + interval '24 hours'
         )
         returning id::text, approval_type::text as approval_type, status::text as status,
                   project_id::text, branch_id::text, requested_by::text, reviewed_by::text,
@@ -1454,20 +2117,23 @@ async function insertExecutionTasks(
 export async function createRuntimeExecutionRun(
   userId: string,
   projectRef: string,
-  approvalId: string
+  approvalId: string,
+  branchId?: string
 ) {
   const context = await getProjectContext(userId, projectRef);
 
   return withTransaction(async (client) => {
     const { rows: approvalRows } = await client.query<{
       id: string;
+      approval_type: Approval["approval_type"];
       status: Approval["status"];
       branch_id: string | null;
       affected_scope: Record<string, unknown>;
       expires_at: Date | string;
     }>(
       `
-        select id::text, status::text as status, branch_id::text, affected_scope, expires_at
+        select id::text, approval_type::text as approval_type, status::text as status,
+               branch_id::text, affected_scope, expires_at
         from public.approvals
         where id = $1::uuid and project_id = $2::uuid
         for update
@@ -1479,11 +2145,22 @@ export async function createRuntimeExecutionRun(
     if (!approval) {
       throw new Error("approval_required");
     }
+    if (approval.approval_type !== "execution_approval") {
+      throw new Error("approval_type_mismatch");
+    }
     if (approval.status !== "approved") {
       throw new Error("approval_not_approved");
     }
     if (new Date(approval.expires_at).getTime() < Date.now()) {
       throw new Error("approval_expired");
+    }
+
+    const executionBranchId = approval.branch_id ?? context.branch.id;
+    if (branchId && branchId !== executionBranchId) {
+      throw new Error("branch_mismatch");
+    }
+    if (executionBranchId !== context.branch.id) {
+      throw new Error("branch_mismatch");
     }
 
     const graphVersionId =
@@ -1515,7 +2192,7 @@ export async function createRuntimeExecutionRun(
                   approval_id::text, status::text as status, triggered_by::text,
                   started_at, completed_at, failure_reason, created_at
       `,
-      [context.project.id, approval.branch_id ?? context.branch.id, graphVersionId, approval.id, userId]
+      [context.project.id, executionBranchId, graphVersionId, approval.id, userId]
     );
 
     const run = toExecutionRun(runRows[0]);
@@ -1730,8 +2407,7 @@ async function completeExecutionArtifacts(
         status,
         previous_deployment_id,
         triggered_by,
-        deployed_at,
-        health_verified_at,
+        failure_reason,
         metadata
       )
       values (
@@ -1740,14 +2416,13 @@ async function completeExecutionArtifacts(
         $3::uuid,
         $4::uuid,
         'vercel',
-        $5,
+        null,
         'production',
-        'healthy'::public.deployment_status,
+        'not_deployed'::public.deployment_status,
+        $5::uuid,
         $6::uuid,
-        $7::uuid,
-        now(),
-        now(),
-        $8::jsonb
+        'No deployment integration is configured for this project.',
+        $7::jsonb
       )
     `,
     [
@@ -1755,10 +2430,12 @@ async function completeExecutionArtifacts(
       input.branchId,
       input.graphVersionId,
       input.runId,
-      "https://sembl.vercel.app",
       existingDeployments[0]?.id ?? null,
       input.userId,
-      JSON.stringify({ source: "semantics_verified_execution" })
+      JSON.stringify({
+        source: "semantics_verified_execution",
+        blocked_reason: "missing_deployment_integration"
+      })
     ]
   );
 
@@ -1766,9 +2443,12 @@ async function completeExecutionArtifacts(
     projectId: input.projectId,
     branchId: input.branchId,
     actorId: input.userId,
-    eventType: "DeploymentCompleted",
+    eventType: "DeploymentFailed",
     subsystem: "deployment",
-    affectedScope: { execution_run_id: input.runId, provider_url: "https://sembl.vercel.app" }
+    affectedScope: {
+      execution_run_id: input.runId,
+      blocked_reason: "missing_deployment_integration"
+    }
   });
 
   await client.query(
@@ -2097,10 +2777,11 @@ export async function getRuntimeNotifications(
              title, body, action_url, read_at, created_at
       from public.notifications
       where workspace_id = $1::uuid
+        and recipient_user_id = $2::uuid
       order by created_at desc
       limit 12
     `,
-    [context.workspace.id]
+    [context.workspace.id, userId]
   );
 
   return rows.map((row) => ({
@@ -2183,6 +2864,7 @@ export async function getRuntimeHomeData(
   email: string | null = null
 ): Promise<RuntimeHomeData> {
   const [
+    directory,
     snapshot,
     specs,
     graph,
@@ -2196,6 +2878,7 @@ export async function getRuntimeHomeData(
     notifications,
     events
   ] = await Promise.all([
+    getRuntimeProjectDirectory(userId),
     getRuntimeProjectSnapshot(userId, projectRef, email),
     getRuntimeSpecs(userId, projectRef),
     getRuntimeGraph(userId, projectRef),
@@ -2211,6 +2894,7 @@ export async function getRuntimeHomeData(
   ]);
 
   return {
+    directory,
     snapshot,
     specs,
     graph,

@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { fail, ok } from "@/lib/api-response";
-import { requireAdmin, requireRouteUser } from "@/lib/auth";
+import { requireProjectRole, requireRouteUser } from "@/lib/auth";
 import { saveSpecDraft } from "@/lib/runtime-store";
 
 const draftSchema = z.object({
@@ -14,8 +14,8 @@ export async function PUT(
 ) {
   try {
     const user = await requireRouteUser(request);
-    requireAdmin(user);
     const { projectId, specType } = await params;
+    await requireProjectRole(user.id, projectId, ["owner", "admin", "member"]);
     const body = draftSchema.parse(await request.json());
 
     return ok(await saveSpecDraft(user.id, projectId, specType, body.content));

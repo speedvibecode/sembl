@@ -33,33 +33,46 @@ export async function requireRouteUser(request: NextRequest): Promise<RouteUser>
     throw new Error("unauthorized");
   }
 
-  await ensureSeedWorkspaceMembership(data.user.id);
-  const role = await getPrimaryWorkspaceRole(data.user.id);
-
   return {
     id: data.user.id,
     email: data.user.email ?? null,
-    role
+    role: "viewer"
   };
 }
 
-export function requireAdmin(user: RouteUser) {
-  if (user.role !== "owner" && user.role !== "admin") {
-    throw new Error("forbidden");
-  }
+export async function getProjectWorkspaceRole(
+  userId: string,
+  projectRef: string
+): Promise<WorkspaceRole> {
+  const { rows } = await query<{ role: WorkspaceRole }>(
+    `
+      select wm.role::text as role
+      from public.projects p
+      join public.workspace_members wm on wm.workspace_id = p.workspace_id
+      where wm.user_id = $1::uuid
+        and (
+          p.id::text = $2
+          or p.slug = $2
+          or ($2 = 'project_sembl_core' and p.slug = 'sembl-core')
+        )
+      limit 1
+    `,
+    [userId, projectRef]
+  );
+
+  return rows[0]?.role ?? "viewer";
 }
 
-export async function ensureSeedWorkspaceMembership(userId: string) {
-  await query(
-    `
-      insert into public.workspace_members (workspace_id, user_id, role)
-      select w.id, $1::uuid, 'owner'::public.workspace_role
-      from public.workspaces w
-      where w.slug = 'speedvibe'
-      on conflict (workspace_id, user_id) do nothing
-    `,
-    [userId]
-  );
+export async function requireProjectRole(
+  userId: string,
+  projectRef: string,
+  allowedRoles: WorkspaceRole[]
+) {
+  const role = await getProjectWorkspaceRole(userId, projectRef);
+  if (!allowedRoles.includes(role)) {
+    throw new Error("forbidden");
+  }
+  return role;
 }
 
 export async function getPrimaryWorkspaceRole(userId: string): Promise<WorkspaceRole> {

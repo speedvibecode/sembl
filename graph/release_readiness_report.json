@@ -1,7 +1,7 @@
 {
   "schema_version": "sembl.v4_3.release_readiness_report.v1",
-  "generated_at": "2026-06-02T14:12:00.000Z",
-  "status": "ready_for_production_deployment",
+  "generated_at": "2026-06-03T10:25:00.000Z",
+  "status": "in_progress_pending_production_deployment",
   "evidence": {
     "graph_validation": {
       "status": "passed",
@@ -19,73 +19,69 @@
       "status": "passed",
       "command": "npm run build"
     },
-    "rendered_e2e": {
-      "status": "passed",
+    "e2e": {
+      "status": "partial",
       "command": "npm run test:e2e",
-      "coverage": [
-        "desktop first meaningful screen",
-        "mobile first meaningful screen",
-        "approval interaction",
-        "AI graph key placeholder error state",
-        "graph node inspection",
-        "graph API response envelope"
+      "passed": [
+        "desktop/mobile unauthenticated Supabase Auth gate",
+        "protected API routes reject missing sessions"
+      ],
+      "skipped": [
+        "authenticated project factory workflow because SEMBL_E2E_EMAIL and SEMBL_E2E_PASSWORD are not set in the local environment"
       ]
     },
     "supabase_migrations": {
       "status": "remote_applied_verified",
       "migrations": [
         "supabase/migrations/20260602124708_initial_sembl_v1_runtime.sql",
-        "supabase/migrations/20260602134518_seed_sembl_core_runtime.sql"
+        "supabase/migrations/20260602134518_seed_sembl_core_runtime.sql",
+        "supabase/migrations/20260602183506_v43_real_backend_workflow.sql",
+        "supabase/migrations/20260603101511_v43_project_factory_hardening.sql"
       ],
-      "remote_history": ["20260602124708", "20260602134518"],
       "verification": {
-        "app_table_count": 27,
-        "rls_enabled_count": 27,
-        "policy_count": 30,
-        "seeded_rows": {
-          "auth.users": 1,
-          "workspaces": 1,
-          "projects": 1,
-          "specification_documents": 8,
-          "specification_revisions": 8,
-          "graph_nodes": 34,
-          "graph_edges": 25,
-          "approvals": 1,
-          "execution_runs": 1,
-          "execution_tasks": 13,
-          "reconciliation_attempts": 1,
-          "deployments": 1
-        }
+        "seed_trigger_exists": false,
+        "seed_function_exists": false,
+        "project_created_event_exists": true
       }
     },
-    "supabase_mcp": {
-      "status": "configured_authenticated",
-      "project_ref": "djquuvkwnjpweubzrsnn",
-      "verification": "codex mcp list shows supabase enabled with OAuth"
+    "supabase_advisors": {
+      "security": {
+        "status": "warn",
+        "remaining": [
+          "Auth leaked password protection is disabled; this is a Supabase Auth dashboard setting."
+        ]
+      },
+      "performance": {
+        "status": "info_only",
+        "remaining": [
+          "Unused index notices are expected immediately after adding hot-path indexes."
+        ]
+      }
     },
-    "agent_skills": {
-      "status": "installed",
-      "skills": ["supabase", "supabase-postgres-best-practices"]
-    },
-    "vercel_build": {
-      "status": "passed",
-      "command": "vercel build --prod"
-    },
-    "vercel_environment": {
-      "status": "configured",
-      "server_only_variables": ["SUPABASE_DB_URL"]
-    },
-    "browser_verification": {
-      "status": "playwright_fallback_used",
-      "reason": "In-app Browser node runtime failed with Windows sandbox spawn setup refresh before opening a tab."
+    "ui_verification": {
+      "status": "passed_partial",
+      "screenshots": [
+        "C:/Users/totla/AppData/Local/Temp/sembl-factory-desktop.png",
+        "C:/Users/totla/AppData/Local/Temp/sembl-factory-mobile.png"
+      ],
+      "coverage": [
+        "dark/bright auth shell desktop",
+        "dark/bright auth shell mobile"
+      ]
     }
   },
   "release_notes": [
-    "Next.js app shell implements the canonical 13-screen navigation model.",
-    "Graph Explorer is read-only and derives from graph/normalized_graph.json.",
-    "API routes use the /api/v1 response envelope and keep graph mutation out of the public graph surface.",
-    "Execution start is approval-gated in the route layer.",
-    "AI graph analysis accepts a runtime OpenAI key and does not persist it.",
-    "Server routes prefer Supabase runtime data when SUPABASE_DB_URL is configured, with graph artifacts as fallback."
+    "Sembl now exposes an authenticated project factory API at /api/v1/projects.",
+    "New projects persist workspace membership, project, base graph version, main branch, starter specification drafts, ProjectCreated event, and recipient notification.",
+    "The app no longer auto-attaches every authenticated user to the seed workspace.",
+    "The public graph versions route is read-only; graph compilation moved to the specification compile workflow.",
+    "Execution completion records missing deployment integrations as not_deployed instead of fabricating healthy Vercel deployments.",
+    "The UI now has a project launcher, project switcher, Overview/Specifications/Execution/Changes/Deployments/Settings views, search, and dark/bright theme."
+  ],
+  "remaining_gates": [
+    "Run authenticated project factory E2E with real SEMBL_E2E_EMAIL and SEMBL_E2E_PASSWORD.",
+    "Deploy to Vercel production.",
+    "Smoke test https://sembl.vercel.app after deployment.",
+    "Enable Supabase Auth leaked password protection in the Supabase dashboard."
   ]
 }

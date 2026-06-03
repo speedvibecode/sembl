@@ -147,8 +147,8 @@
       "execution_boundary": "node.boundary.service_wiring",
       "expected_outputs": ["GitHub remote status, Vercel `sembl` project status, destructive Supabase takeover/reset status, and secrets policy."],
       "validation_gates": ["github_remote_reachable", "vercel_project_status_recorded", "supabase_takeover_reset_verified", "no_secrets_committed"],
-      "status": "blocked_pending_destructive_supabase_reset",
-      "blocker": "GitHub and Vercel preflight passed, but Supabase takeover reset is pending final destructive approval and verification.",
+      "status": "completed",
+      "evidence": "graph/service_preflight.json records Supabase takeover reset complete; GitHub and Vercel preflight passed.",
       "packet": "graph/task-packets/task.06.service_preflight.json"
     },
     {
@@ -173,8 +173,8 @@
       "execution_boundary": "node.boundary.persistence",
       "expected_outputs": ["Supabase migrations, RLS policies, immutable graph/event storage, advisors clean or explicitly waived."],
       "validation_gates": ["migration_applies_cleanly", "rls_enabled_on_exposed_tables", "no_service_role_in_client", "supabase_advisors_reviewed"],
-      "status": "blocked",
-      "blocker": "Cannot start until task.06.service_preflight records Supabase takeover reset as complete and verified.",
+      "status": "completed",
+      "evidence": "Supabase migrations applied through 20260603101511_v43_project_factory_hardening; seed auto-attach trigger removed; security advisors reviewed.",
       "packet": "graph/task-packets/task.07.persistence_foundation.json"
     },
     {
@@ -199,6 +199,8 @@
       "execution_boundary": "node.boundary.api_runtime",
       "expected_outputs": ["Next.js server API modules with Supabase Auth enforcement and graph read-only mutation boundaries."],
       "validation_gates": ["api_contract_tests", "authorization_tests", "graph_write_surface_blocked"],
+      "status": "completed",
+      "evidence": "Authenticated project APIs, target-aware role checks, read-only graph versions route, and specification compile route are implemented.",
       "packet": "graph/task-packets/task.08.api_runtime_foundation.json"
     },
     {
@@ -222,6 +224,8 @@
       "execution_boundary": "node.boundary.api_runtime",
       "expected_outputs": ["Deterministic DAG generator, scoped context generator, execution run lifecycle, and bounded retry behavior."],
       "validation_gates": ["dag_determinism_tests", "cycle_blocks_generation", "context_not_persisted", "approval_required_for_execution"],
+      "status": "in_progress",
+      "blocker": "Spec-to-execution creates persisted task DAGs and execution runs, but real worker/integration execution is still represented as blocked deployment evidence when integrations are missing.",
       "packet": "graph/task-packets/task.09.planner_execution_foundation.json"
     },
     {
@@ -239,6 +243,8 @@
       "execution_boundary": "node.boundary.ui_runtime",
       "expected_outputs": ["Application shell, 13-screen navigation structure, graph inspection surfaces, validation/reconciliation drawers, and status components."],
       "validation_gates": ["ui_matches_ui_graph", "no_direct_graph_mutation_surface", "status_labels_with_icons", "responsive_no_overlap"],
+      "status": "completed",
+      "evidence": "Project launcher, project switcher, Overview/Specifications/Execution/Changes/Deployments/Settings workspace, dark/bright theme, search, and responsive auth screenshots are implemented.",
       "packet": "graph/task-packets/task.10.ui_foundation.json"
     },
     {
@@ -261,6 +267,8 @@
       "execution_boundary": null,
       "expected_outputs": ["Validated integration result, issue routing to owning workers, semantic diff, and escalation if non-convergent."],
       "validation_gates": ["all_tests_pass", "integration_contracts_preserved", "failure_routes_to_owner", "no_unscoped_worker_context"],
+      "status": "in_progress",
+      "blocker": "Local typecheck, lint, build, graph validation, and unauthenticated E2E pass; authenticated factory E2E is defined but skipped until SEMBL_E2E_EMAIL and SEMBL_E2E_PASSWORD are available.",
       "packet": "graph/task-packets/task.11.integration_validation.json"
     },
     {
@@ -278,6 +286,8 @@
       "execution_boundary": null,
       "expected_outputs": ["Release readiness report with validation, service, UI, persistence, and deployment status."],
       "validation_gates": ["graph_valid", "api_valid", "db_valid", "ui_valid", "services_valid", "deployment_ready"],
+      "status": "in_progress",
+      "blocker": "Production deployment and authenticated workflow smoke test are still pending for this rebuild.",
       "packet": "graph/task-packets/task.12_release_readiness.json"
     }
   ],

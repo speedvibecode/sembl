@@ -1,11 +1,11 @@
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { fail, ok } from "@/lib/api-response";
-import { requireAdmin, requireRouteUser } from "@/lib/auth";
+import { requireProjectRole, requireRouteUser } from "@/lib/auth";
 import { publishSpecRevision } from "@/lib/runtime-store";
 
 const publishSchema = z.object({
-  content: z.string().min(1)
+  content: z.string().min(1).optional()
 });
 
 export async function POST(
@@ -14,8 +14,8 @@ export async function POST(
 ) {
   try {
     const user = await requireRouteUser(request);
-    requireAdmin(user);
     const { projectId, specType } = await params;
+    await requireProjectRole(user.id, projectId, ["owner", "admin", "member"]);
     const body = publishSchema.parse(await request.json());
 
     return ok(await publishSpecRevision(user.id, projectId, specType, body.content));
@@ -30,7 +30,10 @@ export async function POST(
     if (message === "spec_not_found" || message === "invalid_spec_type") {
       return fail("not_found", "Specification does not exist.", 404);
     }
+    if (message === "draft_required") {
+      return fail("draft_required", "Save a non-empty draft before publishing.", 409);
+    }
 
-    return fail(message === "forbidden" ? "unauthorized" : "unauthorized", message, 401);
+    return fail(message === "forbidden" ? "forbidden" : "unauthorized", message, message === "forbidden" ? 403 : 401);
   }
 }

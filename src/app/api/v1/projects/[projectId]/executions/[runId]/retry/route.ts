@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 import { fail, ok } from "@/lib/api-response";
-import { requireAdmin, requireRouteUser } from "@/lib/auth";
+import { requireProjectRole, requireRouteUser } from "@/lib/auth";
 import { retryRuntimeExecution } from "@/lib/runtime-store";
 
 export async function POST(
@@ -9,8 +9,8 @@ export async function POST(
 ) {
   try {
     const user = await requireRouteUser(request);
-    requireAdmin(user);
     const { projectId, runId } = await params;
+    await requireProjectRole(user.id, projectId, ["owner", "admin"]);
 
     return ok(await retryRuntimeExecution(user.id, projectId, runId));
   } catch (error) {

@@ -34,24 +34,41 @@ test("protected APIs reject missing sessions", async ({ request }) => {
 const e2eEmail = process.env.SEMBL_E2E_EMAIL;
 const e2ePassword = process.env.SEMBL_E2E_PASSWORD;
 
-test.describe("authenticated v4.3 workflow", () => {
+test.describe("authenticated project factory workflow", () => {
   test.skip(
     !e2eEmail || !e2ePassword,
     "Set SEMBL_E2E_EMAIL and SEMBL_E2E_PASSWORD to run the persisted workflow test."
   );
 
-  test("publishes specs, compiles graph, approves, executes, reconciles, and shows deployment state", async ({
+  test("creates a new project, publishes specs, compiles graph, approves, executes, reconciles, and shows deployment state", async ({
     page
   }) => {
+    const projectName = `E2E Factory ${Date.now()}`;
+
     await page.goto("/");
 
     await page.getByLabel("Email").fill(e2eEmail ?? "");
     await page.getByLabel("Password").fill(e2ePassword ?? "");
     await page.getByRole("button", { name: "Sign in" }).click();
 
-    await expect(page.getByRole("heading", { name: "Sembl Core" })).toBeVisible({
+    await expect(page.getByRole("heading", { name: /Create a project|Project Overview/ })).toBeVisible({
       timeout: 20_000
     });
+
+    if (await page.getByRole("heading", { name: "Project Overview" }).isVisible()) {
+      await page.getByLabel("Create project").click();
+    }
+
+    await page.getByLabel("Project name").fill(projectName);
+    await page
+      .getByLabel("Build brief")
+      .fill("Build a small authenticated customer portal with durable project state.");
+    await page.getByRole("button", { name: "Initialize project factory" }).click();
+
+    await expect(page.getByRole("heading", { name: projectName })).toBeVisible({
+      timeout: 20_000
+    });
+    await page.getByRole("button", { name: "Specifications" }).click();
     await expect(page.getByRole("heading", { name: "Specifications" })).toBeVisible();
 
     const editor = page.locator("textarea.spec-editor");
@@ -86,7 +103,7 @@ test.describe("authenticated v4.3 workflow", () => {
       await expect(page.getByText("Execution state advanced.")).toBeVisible();
     }
 
-    await page.getByRole("button", { name: "Reconciliation" }).click();
+    await page.getByRole("button", { name: "Changes" }).click();
     await expect(page.getByRole("heading", { name: "Reconciliation" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Event Log" })).toBeVisible();
 

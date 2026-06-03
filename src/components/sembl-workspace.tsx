@@ -8,13 +8,11 @@ import {
   CircleDot,
   Code2,
   GitBranch,
-  GitCommitHorizontal,
-  KeyRound,
   Layers3,
   Loader2,
   LogOut,
-  Network,
   Play,
+  Plus,
   RefreshCw,
   Rocket,
   Save,
@@ -41,23 +39,23 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import type {
   Approval,
   ExecutionRun,
-  ExecutionTask,
   GraphNode,
   ModelCatalogEntry,
+  ProjectDirectory,
   RuntimeHomeData,
   SpecificationDraft
 } from "@/lib/types";
 
 type Props = {
-  initialData: RuntimeHomeData;
+  initialData: RuntimeHomeData | null;
+  initialDirectory: ProjectDirectory;
 };
 
 type View =
-  | "Specs"
-  | "Graph"
-  | "Validation"
+  | "Overview"
+  | "Specifications"
   | "Execution"
-  | "Reconciliation"
+  | "Changes"
   | "Deployments"
   | "Settings";
 
@@ -68,13 +66,19 @@ type RequestState = {
 
 type ApiEnvelope<T> = { data: T; meta: Record<string, unknown> | null };
 type ApiError = { error: { code: string; message: string } };
+type SearchResult = {
+  id: string;
+  label: string;
+  detail: string;
+  view: View;
+  kind: "spec" | "node" | "run";
+};
 
 const views: Array<{ id: View; icon: typeof Layers3 }> = [
-  { id: "Specs", icon: ScrollText },
-  { id: "Graph", icon: Network },
-  { id: "Validation", icon: ShieldCheck },
+  { id: "Overview", icon: Activity },
+  { id: "Specifications", icon: ScrollText },
   { id: "Execution", icon: Play },
-  { id: "Reconciliation", icon: GitCommitHorizontal },
+  { id: "Changes", icon: GitBranch },
   { id: "Deployments", icon: Rocket },
   { id: "Settings", icon: SlidersHorizontal }
 ];
@@ -150,7 +154,7 @@ function SectionHeader({
   );
 }
 
-function useApiClient(projectId: string) {
+function useApiClient(projectId?: string) {
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
 
   async function apiFetch<T>(path: string, init: RequestInit = {}) {
@@ -179,8 +183,11 @@ function useApiClient(projectId: string) {
     return payload.data;
   }
 
-  async function refresh() {
-    return apiFetch<RuntimeHomeData>(`/api/v1/projects/${projectId}/state`);
+  async function refresh(nextProjectId = projectId) {
+    if (!nextProjectId) {
+      throw new Error("Create or open a project first.");
+    }
+    return apiFetch<RuntimeHomeData>(`/api/v1/projects/${nextProjectId}/state`);
   }
 
   return { apiFetch, refresh, supabase };
@@ -219,6 +226,117 @@ function Metric({
       <strong>{value}</strong>
       {detail ? <small>{detail}</small> : null}
     </div>
+  );
+}
+
+function OverviewView({
+  data,
+  onOpenSpecifications,
+  onOpenExecution,
+  onOpenChanges
+}: {
+  data: RuntimeHomeData;
+  onOpenSpecifications: () => void;
+  onOpenExecution: () => void;
+  onOpenChanges: () => void;
+}) {
+  const pendingApproval = latestPendingApproval(data);
+  const run = latestRun(data);
+  const latestValidation = data.validationGroups[0] ?? null;
+  const latestDeployment = data.deployments[0] ?? null;
+
+  return (
+    <section className="view-grid overview-view">
+      <div className="panel project-brief">
+        <SectionHeader
+          title="Project Overview"
+          eyebrow="Current operating state"
+          action={<StatusPill label={data.snapshot.project.lifecycle_state} icon={Activity} />}
+        />
+        <div className="brief-grid">
+          <article>
+            <span>Intent source</span>
+            <strong>{data.snapshot.counts.specifications} specifications</strong>
+            <p>{data.snapshot.counts.dirty_specs} drafts changed since the latest published revision.</p>
+            <button type="button" className="secondary-action" onClick={onOpenSpecifications}>
+              <ScrollText size={16} />
+              Open specifications
+            </button>
+          </article>
+          <article>
+            <span>Validation</span>
+            <strong>{latestValidation?.status.replaceAll("_", " ") ?? "No validation yet"}</strong>
+            <p>{latestValidation ? `${latestValidation.runs.length} validation passes recorded.` : "Publish a spec or compile the graph to create validation evidence."}</p>
+            <button type="button" className="secondary-action" onClick={onOpenChanges}>
+              <ShieldCheck size={16} />
+              Review change health
+            </button>
+          </article>
+          <article>
+            <span>Execution</span>
+            <strong>{run?.status.replaceAll("_", " ") ?? "No active run"}</strong>
+            <p>{data.snapshot.counts.open_tasks} tasks are pending or running in the current execution state.</p>
+            <button type="button" className="secondary-action" onClick={onOpenExecution}>
+              <Play size={16} />
+              Open execution
+            </button>
+          </article>
+          <article>
+            <span>Deployment</span>
+            <strong>{latestDeployment?.status.replaceAll("_", " ") ?? "No deployment"}</strong>
+            <p>{latestDeployment?.provider_url ?? "A completed execution will create deployment evidence."}</p>
+          </article>
+        </div>
+      </div>
+
+      <aside className="side-stack">
+        <section className="panel">
+          <SectionHeader title="Next Action" eyebrow="Truthful workflow" />
+          {pendingApproval ? (
+            <div className="empty-state">
+              <StatusPill label="approval_required" icon={AlertTriangle} />
+              <p>Execution is waiting for approval. Review impact and risk before starting work.</p>
+              <button type="button" className="primary-action" onClick={onOpenExecution}>
+                Review approval
+              </button>
+            </div>
+          ) : data.snapshot.counts.dirty_specs > 0 ? (
+            <div className="empty-state">
+              <StatusPill label="draft" />
+              <p>Specification drafts changed. Save, publish, then compile the graph to request execution approval.</p>
+              <button type="button" className="primary-action" onClick={onOpenSpecifications}>
+                Continue specs
+              </button>
+            </div>
+          ) : (
+            <div className="empty-state">
+              <StatusPill label={data.snapshot.runtimeSource} icon={ShieldCheck} />
+              <p>The workspace is connected to Supabase and ready for the next spec-to-execution change.</p>
+            </div>
+          )}
+        </section>
+
+        <section className="panel">
+          <SectionHeader title="Recent Lineage" eyebrow="Append-only events" />
+          <div className="table-list compact-list">
+            {data.events.slice(0, 5).map((event) => (
+              <article key={event.id} className="table-row">
+                <div>
+                  <strong>#{event.sequence_number} {event.event_type}</strong>
+                  <span>{event.originating_subsystem}</span>
+                </div>
+                <small>{new Date(event.created_at).toLocaleString()}</small>
+              </article>
+            ))}
+            {!data.events.length ? (
+              <div className="empty-state">
+                <p>No events have been recorded for this project yet.</p>
+              </div>
+            ) : null}
+          </div>
+        </section>
+      </aside>
+    </section>
   );
 }
 
@@ -262,7 +380,7 @@ function SpecsView({
               <span>{formatSpecLabel(spec.spec_type)}</span>
               <small>
                 rev {spec.active_revision_number ?? 0}
-                {spec.is_dirty ? " · draft changed" : ""}
+                {spec.is_dirty ? " - draft changed" : ""}
               </small>
             </button>
           ))}
@@ -348,16 +466,16 @@ function GraphView({
           },
           style: {
             border: `1px solid ${nodeColors[node.node_type] ?? "#9ca3af"}`,
-            background: node.id === selectedNode.id ? "#ecf5ff" : "#ffffff",
-            color: "#0f172a",
+            background: node.id === selectedNode.id ? "#122a4a" : "#111827",
+            color: "#e5edff",
             borderRadius: 8,
             fontSize: 12,
             width: 170,
             minHeight: 58,
             boxShadow:
               node.id === selectedNode.id
-                ? "0 0 0 3px rgba(37, 99, 235, 0.16)"
-                : "0 10px 24px rgba(15, 23, 42, 0.08)",
+                ? "0 0 0 3px rgba(173, 198, 255, 0.22)"
+                : "0 12px 26px rgba(2, 6, 23, 0.34)",
             whiteSpace: "pre-line"
           }
         };
@@ -403,7 +521,7 @@ function GraphView({
               if (match) onSelectNode(match);
             }}
           >
-            <Background gap={20} color="#dbe4f0" />
+            <Background gap={20} color="#334155" />
             <Controls />
             <MiniMap pannable zoomable nodeStrokeWidth={3} />
           </ReactFlow>
@@ -631,17 +749,63 @@ function ReconciliationView({ data }: { data: RuntimeHomeData }) {
   );
 }
 
+function ChangesView({
+  data,
+  selectedNode,
+  onSelectNode,
+  apiKey,
+  model,
+  models,
+  analysis,
+  onApiKeyChange,
+  onModelChange,
+  onRefreshModels,
+  onAnalyze
+}: {
+  data: RuntimeHomeData;
+  selectedNode: GraphNode;
+  onSelectNode: (node: GraphNode) => void;
+  apiKey: string;
+  model: string;
+  models: ModelCatalogEntry[];
+  analysis: RequestState & { output?: string };
+  onApiKeyChange: (value: string) => void;
+  onModelChange: (value: string) => void;
+  onRefreshModels: () => void;
+  onAnalyze: () => void;
+}) {
+  return (
+    <div className="changes-stack">
+      <GraphView
+        data={data}
+        selectedNode={selectedNode}
+        onSelectNode={onSelectNode}
+        apiKey={apiKey}
+        model={model}
+        models={models}
+        analysis={analysis}
+        onApiKeyChange={onApiKeyChange}
+        onModelChange={onModelChange}
+        onRefreshModels={onRefreshModels}
+        onAnalyze={onAnalyze}
+      />
+      <ValidationView data={data} />
+      <ReconciliationView data={data} />
+    </div>
+  );
+}
+
 function DeploymentsView({ data }: { data: RuntimeHomeData }) {
   return (
     <section className="view-grid two-column">
       <div className="panel">
-        <SectionHeader title="Deployments" eyebrow="Derived artifacts" />
+        <SectionHeader title="Deployments" eyebrow="Derived records" />
         <div className="table-list">
           {data.deployments.map((deployment) => (
             <article key={deployment.id} className="table-row">
               <div>
                 <strong>{deployment.environment}</strong>
-                <span>{deployment.provider_url ?? "No provider URL"}</span>
+                <span>{deployment.provider_url ?? deployment.failure_reason ?? "No provider URL"}</span>
               </div>
               <StatusPill label={deployment.status} icon={Rocket} />
             </article>
@@ -709,12 +873,131 @@ function SettingsView({
   );
 }
 
-export function SemblWorkspace({ initialData }: Props) {
-  const [data, setData] = useState(initialData);
-  const [view, setView] = useState<View>("Specs");
-  const [selectedSpecId, setSelectedSpecId] = useState(initialData.specs[0]?.id ?? "");
-  const [editorContent, setEditorContent] = useState(initialData.specs[0]?.draft_content ?? "");
-  const [selectedNodeId, setSelectedNodeId] = useState(initialData.graph.nodes[0]?.id ?? "");
+function ProjectLauncher({
+  directory,
+  projectName,
+  projectBrief,
+  requestState,
+  onProjectNameChange,
+  onProjectBriefChange,
+  onCreateProject,
+  onOpenProject,
+  onSignOut
+}: {
+  directory: ProjectDirectory;
+  projectName: string;
+  projectBrief: string;
+  requestState: RequestState;
+  onProjectNameChange: (value: string) => void;
+  onProjectBriefChange: (value: string) => void;
+  onCreateProject: (event: React.FormEvent<HTMLFormElement>) => void;
+  onOpenProject: (projectId: string) => void;
+  onSignOut: () => void;
+}) {
+  return (
+    <main className="app-shell launcher-shell">
+      <aside className="left-nav" aria-label="Workspace navigation">
+        <div className="brand">
+          <div className="brand-mark">s</div>
+          <div>
+            <strong>sembl</strong>
+            <span>software factory</span>
+          </div>
+        </div>
+        <div className="nav-footer">
+          <button type="button" className="secondary-action full-width" onClick={onSignOut}>
+            <LogOut size={16} />
+            Sign out
+          </button>
+        </div>
+      </aside>
+
+      <section className="workspace launcher-workspace">
+        <header className="topbar">
+          <div>
+            <p className="section-kicker">Factory launcher</p>
+            <h1>Create a project</h1>
+          </div>
+          <StatusPill label="supabase" icon={ShieldCheck} />
+        </header>
+
+        <section className="view-grid two-column">
+          <form className="panel project-create-panel" onSubmit={onCreateProject}>
+            <SectionHeader title="New Project" eyebrow="Persisted factory state" />
+            <label className="field">
+              <span>Project name</span>
+              <input
+                value={projectName}
+                onChange={(event) => onProjectNameChange(event.target.value)}
+                placeholder="Customer portal"
+                minLength={2}
+                maxLength={96}
+                required
+              />
+            </label>
+            <label className="field">
+              <span>Build brief</span>
+              <textarea
+                className="brief-input"
+                value={projectBrief}
+                onChange={(event) => onProjectBriefChange(event.target.value)}
+                placeholder="Users, workflows, data, integrations, and deployment target"
+                maxLength={4000}
+              />
+            </label>
+            <button
+              type="submit"
+              className="primary-action full-width"
+              disabled={requestState.status === "loading"}
+            >
+              {requestState.status === "loading" ? <Loader2 size={16} /> : <Plus size={16} />}
+              Initialize project factory
+            </button>
+            <p className={clsx("request-message", `request-${requestState.status}`)}>
+              {requestState.message}
+            </p>
+          </form>
+
+          <section className="panel">
+            <SectionHeader title="Existing Projects" eyebrow="Your workspaces" />
+            <div className="table-list">
+              {directory.projects.map((project) => (
+                <button
+                  key={project.id}
+                  type="button"
+                  className="project-row"
+                  onClick={() => onOpenProject(project.id)}
+                >
+                  <div>
+                    <strong>{project.name}</strong>
+                    <span>{project.counts.specifications} specs, {project.counts.graph_versions} graph versions</span>
+                  </div>
+                  <StatusPill label={project.lifecycle_state} />
+                </button>
+              ))}
+              {!directory.projects.length ? (
+                <div className="empty-state">
+                  <p>No projects yet.</p>
+                </div>
+              ) : null}
+            </div>
+          </section>
+        </section>
+      </section>
+    </main>
+  );
+}
+
+export function SemblWorkspace({ initialData, initialDirectory }: Props) {
+  const [data, setData] = useState<RuntimeHomeData | null>(initialData);
+  const [directory, setDirectory] = useState(initialDirectory);
+  const [view, setView] = useState<View>("Overview");
+  const [selectedSpecId, setSelectedSpecId] = useState(initialData?.specs[0]?.id ?? "");
+  const [editorContent, setEditorContent] = useState(initialData?.specs[0]?.draft_content ?? "");
+  const [selectedNodeId, setSelectedNodeId] = useState(initialData?.graph.nodes[0]?.id ?? "");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [projectName, setProjectName] = useState("");
+  const [projectBrief, setProjectBrief] = useState("");
   const [requestState, setRequestState] = useState<RequestState>({
     status: "idle",
     message: "Ready."
@@ -735,12 +1018,52 @@ export function SemblWorkspace({ initialData }: Props) {
     status: "idle",
     message: "Enter a key to analyze the selected graph node."
   });
-  const { apiFetch, refresh, supabase } = useApiClient(data.snapshot.project.id);
+  const { apiFetch, refresh, supabase } = useApiClient(data?.snapshot.project.id);
 
   const selectedSpec =
-    data.specs.find((spec) => spec.id === selectedSpecId) ?? data.specs[0];
+    data?.specs.find((spec) => spec.id === selectedSpecId) ?? data?.specs[0];
   const selectedNode =
-    data.graph.nodes.find((node) => node.id === selectedNodeId) ?? data.graph.nodes[0];
+    data?.graph.nodes.find((node) => node.id === selectedNodeId) ?? data?.graph.nodes[0];
+  const searchResults = useMemo<SearchResult[]>(() => {
+    if (!data) return [];
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) return [];
+
+    const specs = data.specs
+      .filter((spec) => formatSpecLabel(spec.spec_type).toLowerCase().includes(term))
+      .map<SearchResult>((spec) => ({
+        id: spec.id,
+        label: formatSpecLabel(spec.spec_type),
+        detail: spec.is_dirty ? "Specification draft changed" : `Revision ${spec.active_revision_number ?? 0}`,
+        view: "Specifications",
+        kind: "spec"
+      }));
+    const nodes = data.graph.nodes
+      .filter(
+        (node) =>
+          node.id.toLowerCase().includes(term) ||
+          node.name.toLowerCase().includes(term) ||
+          node.node_type.toLowerCase().includes(term)
+      )
+      .map<SearchResult>((node) => ({
+        id: node.id,
+        label: node.name,
+        detail: `${node.node_type} node`,
+        view: "Changes",
+        kind: "node"
+      }));
+    const runs = data.executions
+      .filter((run) => run.id.toLowerCase().includes(term) || run.status.toLowerCase().includes(term))
+      .map<SearchResult>((run) => ({
+        id: run.id,
+        label: `Run ${run.id.slice(0, 8)}`,
+        detail: run.status.replaceAll("_", " "),
+        view: "Execution",
+        kind: "run"
+      }));
+
+    return [...specs, ...nodes, ...runs].slice(0, 8);
+  }, [data, searchTerm]);
 
   useEffect(() => {
     void loadModels();
@@ -752,10 +1075,14 @@ export function SemblWorkspace({ initialData }: Props) {
     const nextSelectedSpec =
       next.specs.find((spec) => spec.id === selectedSpecId) ?? next.specs[0];
     setData(next);
+    setDirectory(next.directory);
     if (nextSelectedSpec) {
       setSelectedSpecId(nextSelectedSpec.id);
       setEditorContent(nextSelectedSpec.draft_content);
     }
+    setSelectedNodeId((current) =>
+      next.graph.nodes.some((node) => node.id === current) ? current : next.graph.nodes[0]?.id ?? ""
+    );
     setRequestState({ status: "success", message });
     return next;
   }
@@ -795,8 +1122,58 @@ export function SemblWorkspace({ initialData }: Props) {
     setEditorContent(spec.draft_content);
   }
 
+  function selectSearchResult(result: SearchResult) {
+    if (!data) return;
+    setView(result.view);
+    setSearchTerm("");
+
+    if (result.kind === "spec") {
+      const spec = data.specs.find((item) => item.id === result.id);
+      if (spec) selectSpec(spec);
+    }
+    if (result.kind === "node") {
+      setSelectedNodeId(result.id);
+    }
+  }
+
+  function hydrateProject(next: RuntimeHomeData) {
+    setData(next);
+    setDirectory(next.directory);
+    setView("Overview");
+    setSelectedSpecId(next.specs[0]?.id ?? "");
+    setEditorContent(next.specs[0]?.draft_content ?? "");
+    setSelectedNodeId(next.graph.nodes[0]?.id ?? "");
+    setSearchTerm("");
+    window.history.replaceState(null, "", `/?project=${next.snapshot.project.id}`);
+  }
+
+  async function openProject(projectId: string) {
+    await runAction("Opening project runtime state...", async () => {
+      const next = await refresh(projectId);
+      hydrateProject(next);
+      setRequestState({ status: "success", message: "Project opened." });
+    });
+  }
+
+  async function createProject(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await runAction("Initializing project factory in Supabase...", async () => {
+      const payload = await apiFetch<{ state: RuntimeHomeData }>("/api/v1/projects", {
+        method: "POST",
+        body: JSON.stringify({
+          name: projectName,
+          brief: projectBrief || undefined
+        })
+      });
+      setProjectName("");
+      setProjectBrief("");
+      hydrateProject(payload.state);
+      setRequestState({ status: "success", message: "Project factory initialized." });
+    });
+  }
+
   async function saveDraft() {
-    if (!selectedSpec) return;
+    if (!data || !selectedSpec) return;
     await runAction("Saving draft to Supabase...", async () => {
       await apiFetch(`/api/v1/projects/${data.snapshot.project.id}/specifications/${selectedSpec.spec_type}/draft`, {
         method: "PUT",
@@ -807,19 +1184,24 @@ export function SemblWorkspace({ initialData }: Props) {
   }
 
   async function publish() {
-    if (!selectedSpec) return;
+    if (!data || !selectedSpec) return;
     await runAction("Publishing revision and running validation...", async () => {
+      await apiFetch(`/api/v1/projects/${data.snapshot.project.id}/specifications/${selectedSpec.spec_type}/draft`, {
+        method: "PUT",
+        body: JSON.stringify({ content: editorContent })
+      });
       await apiFetch(`/api/v1/projects/${data.snapshot.project.id}/specifications/${selectedSpec.spec_type}/publish`, {
         method: "POST",
-        body: JSON.stringify({ content: editorContent })
+        body: JSON.stringify({})
       });
       await refreshState("Revision published and validation recorded.");
     });
   }
 
   async function compileGraph() {
+    if (!data) return;
     await runAction("Compiling graph from active specs...", async () => {
-      await apiFetch(`/api/v1/projects/${data.snapshot.project.id}/graph/versions`, {
+      await apiFetch(`/api/v1/projects/${data.snapshot.project.id}/specifications/compile`, {
         method: "POST",
         body: JSON.stringify({})
       });
@@ -829,6 +1211,7 @@ export function SemblWorkspace({ initialData }: Props) {
   }
 
   async function decideApproval(approval: Approval, path: "approve" | "reject") {
+    if (!data) return;
     await runAction(`${path === "approve" ? "Approving" : "Rejecting"} execution request...`, async () => {
       await apiFetch(`/api/v1/projects/${data.snapshot.project.id}/approvals/${approval.id}/${path}`, {
         method: "POST",
@@ -839,6 +1222,7 @@ export function SemblWorkspace({ initialData }: Props) {
   }
 
   async function startExecution(approval: Approval) {
+    if (!data) return;
     await runAction("Starting execution and creating task DAG...", async () => {
       await apiFetch(`/api/v1/projects/${data.snapshot.project.id}/executions`, {
         method: "POST",
@@ -849,6 +1233,7 @@ export function SemblWorkspace({ initialData }: Props) {
   }
 
   async function advance(run: ExecutionRun) {
+    if (!data) return;
     await runAction("Advancing execution task...", async () => {
       await apiFetch(`/api/v1/projects/${data.snapshot.project.id}/executions/${run.id}/tasks`, {
         method: "POST",
@@ -859,6 +1244,7 @@ export function SemblWorkspace({ initialData }: Props) {
   }
 
   async function retry(run: ExecutionRun) {
+    if (!data) return;
     await runAction("Creating retry execution run...", async () => {
       await apiFetch(`/api/v1/projects/${data.snapshot.project.id}/executions/${run.id}/retry`, {
         method: "POST",
@@ -869,7 +1255,7 @@ export function SemblWorkspace({ initialData }: Props) {
   }
 
   async function analyzeGraph() {
-    if (!selectedNode) return;
+    if (!data || !selectedNode) return;
     if (!apiKey.trim()) {
       setAnalysis({ status: "error", message: "Enter an OpenAI API key first." });
       return;
@@ -900,8 +1286,31 @@ export function SemblWorkspace({ initialData }: Props) {
     window.location.assign("/");
   }
 
+  if (!data) {
+    return (
+      <ProjectLauncher
+        directory={directory}
+        projectName={projectName}
+        projectBrief={projectBrief}
+        requestState={requestState}
+        onProjectNameChange={setProjectName}
+        onProjectBriefChange={setProjectBrief}
+        onCreateProject={createProject}
+        onOpenProject={openProject}
+        onSignOut={signOut}
+      />
+    );
+  }
+
   const currentView =
-    view === "Specs" && selectedSpec ? (
+    view === "Overview" ? (
+      <OverviewView
+        data={data}
+        onOpenSpecifications={() => setView("Specifications")}
+        onOpenExecution={() => setView("Execution")}
+        onOpenChanges={() => setView("Changes")}
+      />
+    ) : view === "Specifications" && selectedSpec ? (
       <SpecsView
         data={data}
         selectedSpec={selectedSpec}
@@ -913,8 +1322,18 @@ export function SemblWorkspace({ initialData }: Props) {
         onPublish={publish}
         onCompileGraph={compileGraph}
       />
-    ) : view === "Graph" && selectedNode ? (
-      <GraphView
+    ) : view === "Execution" ? (
+      <ExecutionView
+        data={data}
+        requestState={requestState}
+        onApprove={(approval) => decideApproval(approval, "approve")}
+        onReject={(approval) => decideApproval(approval, "reject")}
+        onStartExecution={startExecution}
+        onAdvance={advance}
+        onRetry={retry}
+      />
+    ) : view === "Changes" && selectedNode ? (
+      <ChangesView
         data={data}
         selectedNode={selectedNode}
         onSelectNode={(node) => setSelectedNodeId(node.id)}
@@ -927,20 +1346,6 @@ export function SemblWorkspace({ initialData }: Props) {
         onRefreshModels={loadModels}
         onAnalyze={analyzeGraph}
       />
-    ) : view === "Validation" ? (
-      <ValidationView data={data} />
-    ) : view === "Execution" ? (
-      <ExecutionView
-        data={data}
-        requestState={requestState}
-        onApprove={(approval) => decideApproval(approval, "approve")}
-        onReject={(approval) => decideApproval(approval, "reject")}
-        onStartExecution={startExecution}
-        onAdvance={advance}
-        onRetry={retry}
-      />
-    ) : view === "Reconciliation" ? (
-      <ReconciliationView data={data} />
     ) : view === "Deployments" ? (
       <DeploymentsView data={data} />
     ) : (
@@ -975,6 +1380,39 @@ export function SemblWorkspace({ initialData }: Props) {
           })}
         </nav>
 
+        <div className="project-switcher">
+          <div className="switcher-header">
+            <span>Projects</span>
+            <button
+              type="button"
+              aria-label="Create project"
+              onClick={() => {
+                setRequestState({ status: "idle", message: "Name the project to initialize." });
+                setData(null);
+              }}
+            >
+              <Plus size={15} />
+            </button>
+          </div>
+          <div className="project-list">
+            {directory.projects.slice(0, 6).map((project) => (
+              <button
+                key={project.id}
+                type="button"
+                className={clsx("project-nav-item", project.id === data.snapshot.project.id && "active")}
+                onClick={() => {
+                  if (project.id !== data.snapshot.project.id) {
+                    void openProject(project.id);
+                  }
+                }}
+              >
+                <span>{project.name}</span>
+                <small>{project.lifecycle_state.replaceAll("_", " ")}</small>
+              </button>
+            ))}
+          </div>
+        </div>
+
         <div className="nav-footer">
           <p>Supabase runtime</p>
           <StatusPill label={data.snapshot.runtimeSource} icon={ShieldCheck} />
@@ -990,7 +1428,30 @@ export function SemblWorkspace({ initialData }: Props) {
           <div className="topbar-actions">
             <div className="search-box">
               <Search size={16} />
-              <span>Search specs, graph nodes, runs</span>
+              <input
+                aria-label="Search specs, graph nodes, and runs"
+                placeholder="Search specs, graph nodes, runs"
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+              />
+              {searchTerm.trim() ? (
+                <div className="search-results" role="listbox" aria-label="Search results">
+                  {searchResults.length ? (
+                    searchResults.map((result) => (
+                      <button
+                        key={`${result.kind}-${result.id}`}
+                        type="button"
+                        onClick={() => selectSearchResult(result)}
+                      >
+                        <strong>{result.label}</strong>
+                        <span>{result.detail}</span>
+                      </button>
+                    ))
+                  ) : (
+                    <p>No matching graph state.</p>
+                  )}
+                </div>
+              ) : null}
             </div>
             <StatusPill label={data.snapshot.project.lifecycle_state} icon={Activity} />
           </div>
@@ -1020,14 +1481,20 @@ export function SemblWorkspace({ initialData }: Props) {
         </section>
 
         <section className="lifecycle-strip" aria-label="Project lifecycle">
-          {["Specs", "Graph", "Approval", "Execution", "Reconciliation", "Deploy"].map(
+          {["Specifications", "Changes", "Approval", "Execution", "Reconciliation", "Deployments"].map(
             (stage) => (
               <div
                 key={stage}
-                className={clsx("lifecycle-step", view === stage && "current")}
+                className={clsx(
+                  "lifecycle-step",
+                  (view === stage ||
+                    (stage === "Approval" && view === "Execution") ||
+                    (stage === "Reconciliation" && view === "Changes")) &&
+                    "current"
+                )}
               >
                 <span>
-                  {stage === "Specs" ? <ScrollText size={13} /> : <CircleDot size={13} />}
+                  {stage === "Specifications" ? <ScrollText size={13} /> : <CircleDot size={13} />}
                 </span>
                 <strong>{stage}</strong>
               </div>

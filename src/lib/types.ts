@@ -283,6 +283,35 @@ export type ProjectSnapshot = {
   runtimeSource: "supabase";
 };
 
+export type ProjectDirectoryProject = {
+  id: string;
+  workspace_id: string;
+  name: string;
+  slug: string;
+  lifecycle_state: string;
+  operational_mode: string;
+  active_graph_version_id: string | null;
+  updated_at: string;
+  counts: {
+    specifications: number;
+    graph_versions: number;
+    execution_runs: number;
+  };
+};
+
+export type ProjectDirectoryWorkspace = {
+  id: string;
+  name: string;
+  slug: string;
+  role: WorkspaceRole;
+  projects: ProjectDirectoryProject[];
+};
+
+export type ProjectDirectory = {
+  workspaces: ProjectDirectoryWorkspace[];
+  projects: ProjectDirectoryProject[];
+};
+
 export type GraphPayload = {
   version_id: string;
   version_number: number;
@@ -306,6 +335,7 @@ export type ModelCatalogEntry = {
 };
 
 export type RuntimeHomeData = {
+  directory: ProjectDirectory;
   snapshot: ProjectSnapshot;
   specs: SpecificationDraft[];
   graph: GraphPayload;

@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 import { fail, ok } from "@/lib/api-response";
-import { requireAdmin, requireRouteUser } from "@/lib/auth";
+import { requireProjectRole, requireRouteUser } from "@/lib/auth";
 import { decideRuntimeApproval } from "@/lib/runtime-store";
 
 export async function POST(
@@ -9,8 +9,8 @@ export async function POST(
 ) {
   try {
     const user = await requireRouteUser(request);
-    requireAdmin(user);
     const { projectId, approvalId } = await params;
+    await requireProjectRole(user.id, projectId, ["owner", "admin"]);
 
     const approval = await decideRuntimeApproval(user.id, projectId, approvalId, "approved");
     if (!approval) {
