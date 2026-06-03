@@ -26,6 +26,32 @@ test("protected APIs reject missing sessions", async ({ request }) => {
   expect(graph.status()).toBe(401);
   await expectUnauthorized(graph);
 
+  const builds = await request.get("/api/v1/projects/project_sembl_core/builds");
+  expect(builds.status()).toBe(401);
+  await expectUnauthorized(builds);
+
+  const buildFiles = await request.get(
+    "/api/v1/projects/project_sembl_core/builds/00000000-0000-0000-0000-000000000000"
+  );
+  expect(buildFiles.status()).toBe(401);
+  await expectUnauthorized(buildFiles);
+
+  const archive = await request.get(
+    "/api/v1/projects/project_sembl_core/builds/00000000-0000-0000-0000-000000000000/archive"
+  );
+  expect(archive.status()).toBe(401);
+  await expectUnauthorized(archive);
+
+  const createBuild = await request.post("/api/v1/projects/project_sembl_core/builds", {
+    data: {
+      apiKey: "sk-test-placeholder",
+      model: "gpt-5.5",
+      prompt: "Generate a project."
+    }
+  });
+  expect(createBuild.status()).toBe(401);
+  await expectUnauthorized(createBuild);
+
   const models = await request.get("/api/v1/ai/models");
   expect(models.status()).toBe(401);
   await expectUnauthorized(models);
@@ -68,6 +94,11 @@ test.describe("authenticated project factory workflow", () => {
     await expect(page.getByRole("heading", { name: projectName })).toBeVisible({
       timeout: 20_000
     });
+
+    await page.getByRole("button", { name: "Factory" }).click();
+    await expect(page.getByRole("heading", { name: "Project Factory" })).toBeVisible();
+    await expect(page.getByText("No build artifact exists.")).toBeVisible();
+
     await page.getByRole("button", { name: "Specifications" }).click();
     await expect(page.getByRole("heading", { name: "Specifications" })).toBeVisible();
 

@@ -26,6 +26,13 @@ function buildError(error: unknown) {
   if (message === "specification_required") {
     return fail("specification_required", "Publish at least one spec before building.", 409);
   }
+  if (message === "build_schema_unavailable") {
+    return fail(
+      "build_schema_unavailable",
+      "Build artifact storage is not installed. Apply the Supabase project_build_artifacts migration before generating builds.",
+      503
+    );
+  }
   if (message === "unauthorized") {
     return fail("unauthorized", "Sign in to use the project factory.", 401);
   }

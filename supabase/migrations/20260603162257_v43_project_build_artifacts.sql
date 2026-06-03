@@ -30,6 +30,33 @@ alter type public.event_type add value if not exists 'BuildStarted';
 alter type public.event_type add value if not exists 'BuildCompleted';
 alter type public.event_type add value if not exists 'BuildFailed';
 
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'branches_project_id_id_unique'
+  ) then
+    alter table public.branches
+      add constraint branches_project_id_id_unique unique (project_id, id);
+  end if;
+
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'graph_versions_project_id_id_unique'
+  ) then
+    alter table public.graph_versions
+      add constraint graph_versions_project_id_id_unique unique (project_id, id);
+  end if;
+
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'execution_runs_project_id_id_unique'
+  ) then
+    alter table public.execution_runs
+      add constraint execution_runs_project_id_id_unique unique (project_id, id);
+  end if;
+end $$;
+
 create table if not exists public.project_build_runs (
   id uuid primary key default gen_random_uuid(),
   project_id uuid not null references public.projects(id) on delete cascade,
@@ -48,7 +75,11 @@ create table if not exists public.project_build_runs (
   started_at timestamptz,
   completed_at timestamptz,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  unique (project_id, id),
+  foreign key (project_id, branch_id) references public.branches(project_id, id),
+  foreign key (project_id, graph_version_id) references public.graph_versions(project_id, id),
+  foreign key (project_id, execution_run_id) references public.execution_runs(project_id, id)
 );
 
 create table if not exists public.project_build_files (
@@ -64,7 +95,11 @@ create table if not exists public.project_build_files (
   metadata jsonb not null default '{}',
   created_at timestamptz not null default now(),
   unique (build_run_id, path),
-  check (path !~ '(^/|^\.\.?/|/\.\.?/|/\.\.?$|\\)')
+  foreign key (project_id, build_run_id) references public.project_build_runs(project_id, id),
+  check (
+    path !~ '(^/|^\.\.?/|/\.\.?/|/\.\.?$|\\)'
+    and path !~ '(^|/)\.env($|\.|/)'
+  )
 );
 
 create index if not exists idx_project_build_runs_project_created
@@ -105,50 +140,10 @@ using (
     where p.id = project_build_runs.project_id
       and wm.user_id = (select auth.uid())
   )
-);
+    );
 
 drop policy if exists "project_build_runs_insert_project_members" on public.project_build_runs;
-create policy "project_build_runs_insert_project_members"
-on public.project_build_runs
-for insert
-to authenticated
-with check (
-  triggered_by = (select auth.uid())
-  and exists (
-    select 1
-    from public.projects p
-    join public.workspace_members wm on wm.workspace_id = p.workspace_id
-    where p.id = project_build_runs.project_id
-      and wm.user_id = (select auth.uid())
-      and wm.role in ('owner', 'admin', 'member')
-  )
-);
-
 drop policy if exists "project_build_runs_update_project_members" on public.project_build_runs;
-create policy "project_build_runs_update_project_members"
-on public.project_build_runs
-for update
-to authenticated
-using (
-  exists (
-    select 1
-    from public.projects p
-    join public.workspace_members wm on wm.workspace_id = p.workspace_id
-    where p.id = project_build_runs.project_id
-      and wm.user_id = (select auth.uid())
-      and wm.role in ('owner', 'admin', 'member')
-  )
-)
-with check (
-  exists (
-    select 1
-    from public.projects p
-    join public.workspace_members wm on wm.workspace_id = p.workspace_id
-    where p.id = project_build_runs.project_id
-      and wm.user_id = (select auth.uid())
-      and wm.role in ('owner', 'admin', 'member')
-  )
-);
 
 drop policy if exists "project_build_files_select_project_members" on public.project_build_files;
 create policy "project_build_files_select_project_members"
@@ -166,23 +161,6 @@ using (
 );
 
 drop policy if exists "project_build_files_insert_project_members" on public.project_build_files;
-create policy "project_build_files_insert_project_members"
-on public.project_build_files
-for insert
-to authenticated
-with check (
-  exists (
-    select 1
-    from public.projects p
-    join public.workspace_members wm on wm.workspace_id = p.workspace_id
-    join public.project_build_runs pbr on pbr.project_id = p.id
-    where p.id = project_build_files.project_id
-      and pbr.id = project_build_files.build_run_id
-      and wm.user_id = (select auth.uid())
-      and wm.role in ('owner', 'admin', 'member')
-  )
-);
 
 grant select on public.project_build_runs, public.project_build_files to authenticated;
-grant insert, update on public.project_build_runs to authenticated;
-grant insert on public.project_build_files to authenticated;
+revoke insert, update, delete on public.project_build_runs, public.project_build_files from authenticated;

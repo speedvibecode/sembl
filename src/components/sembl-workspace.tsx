@@ -468,6 +468,7 @@ function FactoryView({
   onRefreshModels,
   onBuildPromptChange,
   onGenerateBuild,
+  onDownloadArchive,
   onSelectFile
 }: {
   data: RuntimeHomeData;
@@ -482,6 +483,7 @@ function FactoryView({
   onRefreshModels: () => void;
   onBuildPromptChange: (value: string) => void;
   onGenerateBuild: () => void;
+  onDownloadArchive: () => void;
   onSelectFile: (path: string) => void;
 }) {
   const latestBuild = data.builds.runs[0] ?? null;
@@ -568,6 +570,14 @@ function FactoryView({
         <SectionHeader
           title="Generated Files"
           eyebrow={latestBuild ? `${data.builds.files.length} files from ${latestBuild.id.slice(0, 8)}` : "No bundle"}
+          action={
+            latestBuild && data.builds.files.length ? (
+              <button type="button" className="secondary-action" onClick={onDownloadArchive}>
+                <Code2 size={16} />
+                Download artifact
+              </button>
+            ) : null
+          }
         />
         <div className="file-browser">
           <nav className="file-list" aria-label="Generated files">
@@ -611,10 +621,18 @@ function FactoryView({
           <article>
             <StatusPill label={String(repositoryExport.status ?? "not_run")} icon={GitBranch} />
             <p>{String(repositoryExport.reason ?? "Generate a build before repository export.")}</p>
+            <button type="button" className="secondary-action full-width" disabled>
+              <GitBranch size={16} />
+              Export to GitHub
+            </button>
           </article>
           <article>
             <StatusPill label={String(deployment.status ?? "not_run")} icon={Rocket} />
             <p>{String(deployment.reason ?? "Generate a build before deployment.")}</p>
+            <button type="button" className="secondary-action full-width" disabled>
+              <Rocket size={16} />
+              Deploy to Vercel
+            </button>
           </article>
           <article>
             <StatusPill label="supabase" icon={ShieldCheck} />
@@ -1501,6 +1519,43 @@ export function SemblWorkspace({ initialData, initialDirectory }: Props) {
     });
   }
 
+  async function downloadBuildArchive() {
+    if (!data?.builds.runs[0]) return;
+    await runAction("Preparing artifact archive...", async () => {
+      const {
+        data: { session }
+      } = await supabase.auth.getSession();
+      if (!session) {
+        throw new Error("Session expired. Sign in again.");
+      }
+
+      const buildRun = data.builds.runs[0];
+      const response = await fetch(
+        `/api/v1/projects/${data.snapshot.project.id}/builds/${buildRun.id}/archive`,
+        {
+          headers: {
+            authorization: `Bearer ${session.access_token}`
+          }
+        }
+      );
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as ApiError | null;
+        throw new Error(payload && "error" in payload ? payload.error.message : "Archive download failed.");
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `sembl-${buildRun.id.slice(0, 8)}.zip`;
+      document.body.append(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      setRequestState({ status: "success", message: "Artifact archive downloaded." });
+    });
+  }
+
   async function analyzeGraph() {
     if (!data || !selectedNode) return;
     if (!apiKey.trim()) {
@@ -1584,6 +1639,7 @@ export function SemblWorkspace({ initialData, initialDirectory }: Props) {
         onRefreshModels={loadModels}
         onBuildPromptChange={setBuildPrompt}
         onGenerateBuild={generateBuild}
+        onDownloadArchive={downloadBuildArchive}
         onSelectFile={setSelectedBuildFilePath}
       />
     ) : view === "Execution" ? (

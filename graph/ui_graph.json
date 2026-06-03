@@ -171,11 +171,17 @@
       "name": "Impact Panel",
       "allowed_actions": ["view_summary", "view_scope", "view_impact_score", "view_traceability"],
       "forbidden_actions": ["approve_without_context"]
+    },
+    {
+      "id": "surface.artifact_factory",
+      "name": "Artifact Factory",
+      "allowed_actions": ["generate_artifact", "inspect_file", "download_archive", "view_provider_blocker"],
+      "forbidden_actions": ["claim_repository_export_without_provider", "claim_deployment_without_provider", "persist_user_api_key"]
     }
   ],
   "navigation_model": {
     "global_navigation": ["Workspace Home", "Approval Center", "Activity Center", "Workspace Settings"],
-    "project_navigation": ["Project Overview", "Specifications", "Execution", "Changes", "Deployments"],
+    "project_navigation": ["Project Overview", "Specifications", "Factory", "Execution", "Changes", "Deployments"],
     "contextual_navigation": ["Repository Ingestion", "Approval Review", "Conflict Resolution", "Escalation Center"],
     "avoid_primary_navigation": ["Task DAGs", "Agent Systems", "Graph Storage", "Context Generation", "Reconciliation Engines"]
   },
@@ -203,6 +209,10 @@
     "blocked",
     "approval_required",
     "approved",
+    "generating",
+    "generated",
+    "github_blocked",
+    "deploy_blocked",
     "executing",
     "reconciling",
     "completed",
