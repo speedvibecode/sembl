@@ -51,19 +51,22 @@ For a CLI tool install without graph extras:
 uv tool install git+https://github.com/speedvibecode/sembl.git
 ```
 
-Public package installs roll out in two later stages, neither live yet:
+Public package installs roll out in stages:
 
 ```powershell
-# Stage 2 - TestPyPI (next)
+# Stage 2 - TestPyPI (live now)
 pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ sembl
 
-# Stage 3 - PyPI (later)
+# Stage 3 - PyPI (not live yet)
 uv tool install sembl
 pip install sembl
 ```
 
-`pip install sembl` does not work yet. It requires publishing the package to
-TestPyPI and then PyPI. Until then, use the GitHub install above.
+TestPyPI is live: https://test.pypi.org/project/sembl/. The `--extra-index-url`
+is required so dependencies resolve from the real PyPI.
+
+Plain `pip install sembl` from public PyPI does **not** work yet — that is the
+later Stage 3. Until then, use the GitHub install above or the TestPyPI command.
 
 ## Install From Source
 
