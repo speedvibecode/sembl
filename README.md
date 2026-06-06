@@ -51,14 +51,19 @@ For a CLI tool install without graph extras:
 uv tool install git+https://github.com/speedvibecode/sembl.git
 ```
 
-The future public package path is:
+Public package installs roll out in two later stages, neither live yet:
 
 ```powershell
+# Stage 2 - TestPyPI (next)
+pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ sembl
+
+# Stage 3 - PyPI (later)
 uv tool install sembl
 pip install sembl
 ```
 
-That requires publishing the package to PyPI first.
+`pip install sembl` does not work yet. It requires publishing the package to
+TestPyPI and then PyPI. Until then, use the GitHub install above.
 
 ## Install From Source
 

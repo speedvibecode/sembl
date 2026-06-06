@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,12 +8,43 @@ version = "0.1.0"
 description = "Turn messy repo intent into scoped AI Work Orders"
 readme = "README.md"
 requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "speedvibecode", email = "f20220620@hyderabad.bits-pilani.ac.in" },
+    { name = "Siddharth Totla", email = "totlasiddharth@gmail.com" },
+]
+keywords = [
+    "ai",
+    "coding-agents",
+    "work-order",
+    "code-review",
+    "llm",
+    "developer-tools",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Code Generators",
+    "Topic :: Software Development :: Quality Assurance",
+]
 dependencies = [
     "openai>=1.30.0",
     "anthropic>=0.25.0",
     "click>=8.1.0",
     "rich>=13.0.0",
 ]
+
+[project.urls]
+Homepage = "https://sembl.vercel.app"
+Repository = "https://github.com/speedvibecode/sembl"
+Issues = "https://github.com/speedvibecode/sembl/issues"
 
 [project.optional-dependencies]
 graph = [

@@ -6,6 +6,10 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 
+# Build artifacts
+build/
+dist/
+
 # Virtual environments and package caches
 .venv/
 venv/
