@@ -11,10 +11,9 @@ name: Publish dev build to TestPyPI
 # nothing is committed and version numbers never collide.
 
 on:
-  push:
-    branches: [master]
-    paths-ignore:
-      - "**.md"
+  # Manual only. Stable releases go straight to PyPI via release.yml, so nothing
+  # sits in test by default. Trigger this from the Actions tab only when you
+  # deliberately want a TestPyPI pre-release dev build for early testing.
   workflow_dispatch:
 
 jobs:

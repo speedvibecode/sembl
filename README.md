@@ -231,13 +231,13 @@ Release.
 The workflow builds, runs `twine check`, and publishes to PyPI. The tag must
 equal the `pyproject.toml` version or the build fails with a clear error.
 
-### Dev builds -> TestPyPI
+### Dev builds -> TestPyPI (manual, optional)
 
-`.github/workflows/testpypi.yml` publishes a uniquely-versioned dev build
-(`<version>.devN`) to TestPyPI on every push to `master` that touches code.
-Nothing is committed; the `.devN` suffix is stamped in CI only.
-
-Testers install the latest dev build with pip:
+While the project is this early, stable releases go straight to PyPI and nothing
+sits in TestPyPI by default. `.github/workflows/testpypi.yml` is **manual only**
+(`workflow_dispatch`): trigger it from the Actions tab when you deliberately want
+a pre-release dev build (`<version>.devN`, stamped in CI). When you do, testers
+install it with pip:
 
 ```powershell
 pip install --pre --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ sembl
