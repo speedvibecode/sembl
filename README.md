@@ -30,43 +30,42 @@ Sembl is early but usable for testing. The current CLI supports:
 - OpenAI, Anthropic, Gemini, and NVIDIA NIM providers
 - work-order output as Markdown, JSON, executor prompt, and validation plan
 
-The best current test path is graph-first:
+The best test path is graph-first:
 
 ```powershell
-uv pip install "sembl[graph-pipeline] @ git+https://github.com/speedvibecode/sembl.git"
+pip install "sembl[graph-pipeline]"
 sembl generate --repo C:\path\to\repo --task "fix the failing login redirect test" --provider nvidia --require-graph-context
 ```
 
-## Install From GitHub
+## Install
 
-For tester installs without cloning the repo:
+Sembl is published on PyPI: https://pypi.org/project/sembl/
+
+```powershell
+# Core CLI
+pip install sembl
+
+# With the graph pipeline (Graphify + code-review-graph)
+pip install "sembl[graph-pipeline]"
+
+# As an isolated tool
+uv tool install sembl
+```
+
+### Pre-release channels
+
+For the latest unreleased commits, install from GitHub:
 
 ```powershell
 uv pip install "sembl[graph-pipeline] @ git+https://github.com/speedvibecode/sembl.git"
 ```
 
-For a CLI tool install without graph extras:
+TestPyPI mirrors each release (the `--extra-index-url` lets dependencies resolve
+from the real PyPI):
 
 ```powershell
-uv tool install git+https://github.com/speedvibecode/sembl.git
-```
-
-Public package installs roll out in stages:
-
-```powershell
-# Stage 2 - TestPyPI (live now)
 pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ sembl
-
-# Stage 3 - PyPI (not live yet)
-uv tool install sembl
-pip install sembl
 ```
-
-TestPyPI is live: https://test.pypi.org/project/sembl/. The `--extra-index-url`
-is required so dependencies resolve from the real PyPI.
-
-Plain `pip install sembl` from public PyPI does **not** work yet — that is the
-later Stage 3. Until then, use the GitHub install above or the TestPyPI command.
 
 ## Install From Source
 
