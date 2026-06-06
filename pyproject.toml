@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sembl"
+version = "0.1.0"
+description = "Turn messy repo intent into scoped AI Work Orders"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "openai>=1.30.0",
+    "anthropic>=0.25.0",
+    "click>=8.1.0",
+    "rich>=13.0.0",
+]
+
+[project.optional-dependencies]
+graph = [
+    "graphifyy>=0.8.0",
+]
+crg = [
+    "code-review-graph",
+]
+graph-pipeline = [
+    "graphifyy>=0.8.0",
+    "code-review-graph",
+]
+
+[project.scripts]
+sembl = "sembl.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["sembl*"]

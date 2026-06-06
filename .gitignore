@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments and package caches
+.venv/
+venv/
+.uv-cache/
+
+# Sembl/local graph artifacts
+.sembl/
+.crg-data/
+.crg-home/
+graphify-out/
+
+# Local benchmark clones and scratch data
+benchmarks/
+
+# Internal handoff/product notes
+HANDOFF.md
+Sembl-Product-Brief.docx
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
