@@ -188,4 +188,21 @@ If you test Sembl on a real repo, the best feedback is:
 - whether the executor agent could complete the task without scope confusion
 - any hallucinated files, missing validation commands, or false stop conditions
 
+## Releasing
+
+Releases publish to PyPI automatically via GitHub Actions and PyPI Trusted
+Publishing (`.github/workflows/release.yml`). No API token is stored; PyPI
+trusts this repo directly.
+
+To cut a release:
+
+1. Bump the version in `pyproject.toml`, `sembl/__init__.py`, and the
+   `--version` option in `sembl/cli.py` (all three must match).
+2. Commit and push.
+3. On GitHub: **Releases -> Draft a new release -> Create a new tag** named
+   `v<version>` (e.g. `v0.1.2`, matching the bumped version) -> **Publish**.
+
+The workflow then builds, runs `twine check`, and publishes to PyPI. The tag
+must equal the `pyproject.toml` version or the build fails with a clear error.
+
 Models write code. Sembl makes the work governable.
