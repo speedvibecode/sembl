@@ -82,7 +82,9 @@ class GraphDiagnostics:
     @property
     def graph_available(self) -> bool:
         """True if at least one usable graph source exists for this repo."""
-        return self.graphify_graph == "present" or self.crg_status == "present"
+        graphify_ready = self.graphify_installed and self.graphify_graph == "present"
+        crg_ready = self.crg_installed and self.crg_status == "present"
+        return graphify_ready or crg_ready
 
     def to_dict(self) -> dict:
         import dataclasses
@@ -273,9 +275,9 @@ def resolve_graph_plan(mode: str, d: GraphDiagnostics) -> tuple:
 
     if d.graph_available:
         srcs = []
-        if d.graphify_graph == "present":
+        if d.graphify_installed and d.graphify_graph == "present":
             srcs.append("Graphify")
-        if d.crg_status == "present":
+        if d.crg_installed and d.crg_status == "present":
             srcs.append(f"code-review-graph ({d.crg_nodes} nodes)")
         return ("use", "Graph context available: " + ", ".join(srcs) + ".")
 

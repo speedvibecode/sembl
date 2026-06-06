@@ -18,6 +18,7 @@ from pathlib import Path
 
 import click
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -100,7 +101,7 @@ def generate(repo, task, provider, model, api_key, graph_mode, refresh_graph,
         elif tools_missing(diag):
             console.print(
                 "\n[red]Cannot refresh graph: the graph tools are not installed.[/red]\n"
-                f"Install them with [bold]{INSTALL_HINT}[/bold] (or run [bold]sembl doctor --fix[/bold]),\n"
+                f"Install them with [bold]{escape(INSTALL_HINT)}[/bold] (or run [bold]sembl doctor --fix[/bold]),\n"
                 "then rerun with --refresh-graph.\n"
             )
             sys.exit(1)
@@ -118,8 +119,18 @@ def generate(repo, task, provider, model, api_key, graph_mode, refresh_graph,
     color = {"use": "green", "fallback": "yellow", "off": "dim"}.get(action, "white")
     console.print(f"[{color}]{message}[/{color}]\n")
 
-    use_graphify = action == "use" and diag.graphify_graph == "present" and not no_graphify
-    use_crg = action == "use" and diag.crg_status == "present" and not no_crg
+    use_graphify = (
+        action == "use"
+        and diag.graphify_installed
+        and diag.graphify_graph == "present"
+        and not no_graphify
+    )
+    use_crg = (
+        action == "use"
+        and diag.crg_installed
+        and diag.crg_status == "present"
+        and not no_crg
+    )
 
     # ── Step 3: Probe the repo ────────────────────────────────────────────
     with console.status("[blue]Probing repo...[/blue]"):
@@ -290,7 +301,7 @@ def _graph_unavailable_panel(message: str, diag) -> Panel:
     cmds = repair_commands(diag)
     if cmds:
         lines.append("[bold]To enable graph context:[/bold]")
-        lines += [f"  [cyan]{c}[/cyan]" for c in cmds]
+        lines += [f"  [cyan]{escape(c)}[/cyan]" for c in cmds]
         lines.append("")
     lines.append("Or rerun with [bold]--graph-mode auto[/bold] for direct-probe fallback, "
                  "or [bold]--graph-mode off[/bold] to skip graph tools.")
@@ -301,7 +312,7 @@ def _graph_unavailable_panel(message: str, diag) -> Panel:
 
 
 def _fix_tools():
-    console.print(f"\n[blue]Installing graph tools:[/blue] {INSTALL_HINT}")
+    console.print(f"\n[blue]Installing graph tools:[/blue] {escape(INSTALL_HINT)}")
     console.print("[dim]You passed --fix, so this changes your Python environment.[/dim]")
     with console.status("[blue]Installing...[/blue]"):
         ok, out = install_graph_tools()
@@ -311,7 +322,10 @@ def _fix_tools():
         console.print("[red]Install failed.[/red]")
         if out:
             console.print(f"[dim]{out[-600:]}[/dim]")
-        console.print(f"Try manually: [bold]{INSTALL_HINT}[/bold]  or  [bold]{INSTALL_HINT_UV}[/bold]\n")
+        console.print(
+            f"Try manually: [bold]{escape(INSTALL_HINT)}[/bold]  or  "
+            f"[bold]{escape(INSTALL_HINT_UV)}[/bold]\n"
+        )
 
 
 def _render_doctor(diag):
@@ -342,7 +356,7 @@ def _render_doctor(diag):
         cmds = repair_commands(diag)
         if cmds:
             lines = ["[bold]Fix it with:[/bold]"]
-            lines += [f"  [cyan]{c}[/cyan]" for c in cmds]
+            lines += [f"  [cyan]{escape(c)}[/cyan]" for c in cmds]
             if tools_missing(diag):
                 lines += ["", "Shortcut: [bold]sembl doctor --fix[/bold] installs the tools for you."]
             console.print(Panel("\n".join(lines), border_style="dim"))
@@ -540,3 +554,7 @@ def _format_nvidia_error(message: str, status_code: int | None, code: str | None
         )
 
     return f"\n[red]Generation failed:[/red] NVIDIA API error: {message}"
+
+
+if __name__ == "__main__":
+    main()

@@ -23,7 +23,10 @@ class ResolveGraphPlanTests(unittest.TestCase):
         self.assertEqual(action, "off")
 
     def test_required_uses_when_available(self):
-        action, msg = resolve_graph_plan("required", _diag(graphify_graph="present"))
+        action, msg = resolve_graph_plan(
+            "required",
+            _diag(graphify_path="/x/graphify", graphify_graph="present"),
+        )
         self.assertEqual(action, "use")
         self.assertIn("Graphify", msg)
 
@@ -37,7 +40,10 @@ class ResolveGraphPlanTests(unittest.TestCase):
         self.assertEqual(action, "fallback")
 
     def test_auto_uses_when_crg_present(self):
-        action, msg = resolve_graph_plan("auto", _diag(crg_status="present", crg_nodes=194))
+        action, msg = resolve_graph_plan(
+            "auto",
+            _diag(crg_path="/x/crg", crg_status="present", crg_nodes=194),
+        )
         self.assertEqual(action, "use")
         self.assertIn("194", msg)
 
@@ -77,7 +83,18 @@ class DetectTests(unittest.TestCase):
                 d = detect(str(root))
             self.assertEqual(d.graphify_graph, "present")
             self.assertFalse(d.graphify_installed)
-            self.assertTrue(d.graph_available)  # a present Graphify artifact means graph is available
+            self.assertFalse(d.graph_available)
+
+    def test_graphify_artifact_is_available_when_tool_is_installed(self):
+        with TemporaryDirectory() as tmp, patch.dict(os.environ, {}, clear=True):
+            root = Path(tmp)
+            (root / "graphify-out").mkdir()
+            (root / "graphify-out" / "graph.json").write_text('{"nodes":[]}', encoding="utf-8")
+            with patch("sembl.graph_diagnostics._resolve_cli", return_value="/x/graphify"):
+                d = detect(str(root))
+            self.assertEqual(d.graphify_graph, "present")
+            self.assertTrue(d.graphify_installed)
+            self.assertTrue(d.graph_available)
 
     def test_missing_everything_is_unavailable(self):
         with TemporaryDirectory() as tmp, patch.dict(os.environ, {}, clear=True):
@@ -107,6 +124,7 @@ class GenerateRequiredModeTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 1)
         self.assertNotIsInstance(result.exception, AssertionError)
         self.assertIn("unavailable", result.output.lower())
+        self.assertIn('pip install "sembl[graph-pipeline]"', result.output)
 
 
 if __name__ == "__main__":
