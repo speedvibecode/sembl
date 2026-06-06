@@ -17,6 +17,8 @@ A Work Order is an execution contract. It tells an agent:
 - how to prove it succeeded
 - when to stop and ask a human
 
+Website: https://sembl.vercel.app
+
 ## Current Status
 
 Sembl is early but usable for testing. The current CLI supports:
@@ -31,9 +33,32 @@ Sembl is early but usable for testing. The current CLI supports:
 The best current test path is graph-first:
 
 ```powershell
-uv pip install -e ".[graph-pipeline]"
+uv pip install "sembl[graph-pipeline] @ git+https://github.com/speedvibecode/sembl.git"
 sembl generate --repo C:\path\to\repo --task "fix the failing login redirect test" --provider nvidia --require-graph-context
 ```
+
+## Install From GitHub
+
+For tester installs without cloning the repo:
+
+```powershell
+uv pip install "sembl[graph-pipeline] @ git+https://github.com/speedvibecode/sembl.git"
+```
+
+For a CLI tool install without graph extras:
+
+```powershell
+uv tool install git+https://github.com/speedvibecode/sembl.git
+```
+
+The future public package path is:
+
+```powershell
+uv tool install sembl
+pip install sembl
+```
+
+That requires publishing the package to PyPI first.
 
 ## Install From Source
 
