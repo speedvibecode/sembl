@@ -5,12 +5,14 @@ Sembl CLI — the first machine.
 
 Commands:
   sembl generate  — repo + task → Work Order
+  sembl doctor    — check the graph subsystem (tools, graphs, keys, fixes)
   sembl show      — display the latest Work Order
   sembl list      — list all Work Orders in this repo
 """
 
 import os
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -21,9 +23,18 @@ from rich.table import Table
 from rich.text import Text
 from rich import box
 
-from .repo_probe import probe_repo
+from .repo_probe import probe_repo, _crg_common_args, _crg_env
 from .generator import generate_work_order
 from .output import write_work_order
+from .graph_diagnostics import (
+    detect,
+    resolve_graph_plan,
+    repair_commands,
+    tools_missing,
+    install_graph_tools,
+    INSTALL_HINT,
+    INSTALL_HINT_UV,
+)
 
 console = Console()
 
@@ -49,20 +60,29 @@ def main():
               help="Model name. Defaults to gpt-4o (openai), claude-sonnet-4-6 (anthropic), gemini-2.5-flash (gemini), or mistralai/mistral-medium-3.5-128b (nvidia).")
 @click.option("--api-key",  default=None,
               help="API key. Otherwise Sembl reads the selected provider env var.")
+@click.option("--graph-mode",
+              type=click.Choice(["auto", "required", "off"], case_sensitive=False),
+              default="auto", show_default=True,
+              help="auto: use graph context if available, else fall back to direct probing. "
+                   "required: fail before any LLM call if graph context is unavailable. "
+                   "off: skip graph tools entirely.")
+@click.option("--refresh-graph", is_flag=True, default=False,
+              help="Rebuild Graphify + code-review-graph context before generating (graph tools must be installed).")
+@click.option("--require-graph-context", is_flag=True, default=False,
+              help="Alias for --graph-mode required.")
 @click.option("--no-graphify", is_flag=True, default=False,
               help="Skip graphify even if available.")
 @click.option("--no-crg",      is_flag=True, default=False,
               help="Skip code-review-graph even if available.")
-@click.option("--require-graph-context", is_flag=True, default=False,
-              help="Fail instead of using direct-probe fallback when graphify/CRG context is unavailable.")
 @click.option("--no-graph-enrichment", is_flag=True, default=False,
               help="Skip the LLM pre-pass that synthesizes code-review-graph output into an impact analysis.")
-def generate(repo, task, provider, model, api_key, no_graphify, no_crg, require_graph_context, no_graph_enrichment):
+def generate(repo, task, provider, model, api_key, graph_mode, refresh_graph,
+             require_graph_context, no_graphify, no_crg, no_graph_enrichment):
     """Generate a Work Order from a repo and a task description."""
 
     repo_path = str(Path(repo).resolve())
+    mode = "required" if require_graph_context else graph_mode.lower()
 
-    # ── Step 1: Probe the repo ────────────────────────────────────────────
     console.print()
     console.print(Panel(
         f"[bold]Task:[/bold] {task}",
@@ -71,26 +91,51 @@ def generate(repo, task, provider, model, api_key, no_graphify, no_crg, require_
     ))
     console.print()
 
+    # ── Step 1: Graph diagnostics (cheap, no LLM) ─────────────────────────
+    diag = detect(repo_path)
+
+    if refresh_graph:
+        if mode == "off":
+            console.print("[yellow]--refresh-graph ignored because --graph-mode off.[/yellow]\n")
+        elif tools_missing(diag):
+            console.print(
+                "\n[red]Cannot refresh graph: the graph tools are not installed.[/red]\n"
+                f"Install them with [bold]{INSTALL_HINT}[/bold] (or run [bold]sembl doctor --fix[/bold]),\n"
+                "then rerun with --refresh-graph.\n"
+            )
+            sys.exit(1)
+        else:
+            _refresh_graph(repo_path, diag)
+            diag = detect(repo_path)  # re-read after rebuilding
+
+    # ── Step 2: Resolve what to do with graph context ─────────────────────
+    action, message = resolve_graph_plan(mode, diag)
+    if action == "fail":
+        # Required but unavailable. Stop BEFORE the API-key check and any LLM call.
+        console.print(_graph_unavailable_panel(message, diag))
+        sys.exit(1)
+
+    color = {"use": "green", "fallback": "yellow", "off": "dim"}.get(action, "white")
+    console.print(f"[{color}]{message}[/{color}]\n")
+
+    use_graphify = action == "use" and diag.graphify_graph == "present" and not no_graphify
+    use_crg = action == "use" and diag.crg_status == "present" and not no_crg
+
+    # ── Step 3: Probe the repo ────────────────────────────────────────────
     with console.status("[blue]Probing repo...[/blue]"):
         probe = probe_repo(
             repo_path,
             task,
-            use_graphify=not no_graphify,
-            use_crg=not no_crg,
+            use_graphify=use_graphify,
+            use_crg=use_crg,
         )
 
-    _print_probe_summary(probe, no_graphify, no_crg)
-    if require_graph_context and probe.context_basis != "graph_pipeline":
-        console.print(
-            "\n[red]Graph context required but unavailable.[/red]\n"
-            "Run graphify/code-review-graph for this repo, check PATH/venv resolution, "
-            "or rerun without [bold]--require-graph-context[/bold] to allow direct-probe fallback.\n"
-        )
-        sys.exit(1)
+    _print_probe_summary(probe, not use_graphify, not use_crg)
 
-    # ── Step 2: Generate Work Order ───────────────────────────────────────
+    # ── Step 4: Generate Work Order ───────────────────────────────────────
     _check_api_key(provider, api_key)
 
+    enrich = action == "use" and not no_graph_enrichment
     with console.status(f"[blue]Generating Work Order via {provider}...[/blue]"):
         try:
             wo = generate_work_order(
@@ -99,7 +144,7 @@ def generate(repo, task, provider, model, api_key, no_graphify, no_crg, require_
                 model_provider=provider,
                 model=model,
                 api_key=api_key,
-                enrich_graph=not no_graph_enrichment,
+                enrich_graph=enrich,
             )
         except Exception as e:
             console.print(_format_generation_error(e))
@@ -109,8 +154,35 @@ def generate(repo, task, provider, model, api_key, no_graphify, no_crg, require_
     with console.status("[blue]Writing output files...[/blue]"):
         out_dir = write_work_order(wo, repo_path)
 
-    # ── Step 4: Print summary ─────────────────────────────────────────────
+    # ── Step 5: Print summary ─────────────────────────────────────────────
     _print_work_order_summary(wo, out_dir)
+
+
+# ── sembl doctor ──────────────────────────────────────────────────────────────
+
+@main.command()
+@click.option("--repo", "-r", default=".", show_default=True,
+              help="Path to the repository.")
+@click.option("--json", "as_json", is_flag=True, default=False,
+              help="Print the diagnostics as JSON.")
+@click.option("--fix", is_flag=True, default=False,
+              help="Install missing graph tools. Opt-in: only runs when you pass --fix, and it changes your Python environment.")
+def doctor(repo, as_json, fix):
+    """Check the graph subsystem: tools, graphs, provider keys, and how to fix gaps."""
+    repo_path = str(Path(repo).resolve())
+    diag = detect(repo_path)
+
+    if fix and tools_missing(diag):
+        _fix_tools()
+        diag = detect(repo_path)
+    elif fix:
+        console.print("[green]Graph tools already installed — nothing to fix.[/green]\n")
+
+    if as_json:
+        click.echo(json.dumps(diag.to_dict(), indent=2))
+        return
+
+    _render_doctor(diag)
 
 
 # ── sembl show ────────────────────────────────────────────────────────────────
@@ -192,6 +264,90 @@ def list_orders(repo):
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
+def _refresh_graph(repo_path: str, diag):
+    """Rebuild Graphify and code-review-graph context, with visible output."""
+    root = Path(repo_path)
+    console.print("[blue]Refreshing graph context...[/blue]")
+    console.print(f"[dim]$ graphify update {root} --no-cluster[/dim]")
+    try:
+        subprocess.run([diag.graphify_path, "update", str(root), "--no-cluster"], cwd=str(root))
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[yellow]Graphify refresh failed: {e}[/yellow]")
+    console.print("[dim]$ code-review-graph build --skip-flows[/dim]")
+    try:
+        subprocess.run(
+            [diag.crg_path, "build", *_crg_common_args(root), "--skip-flows"],
+            cwd=str(root), env=_crg_env(root),
+        )
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[yellow]code-review-graph refresh failed: {e}[/yellow]")
+    console.print()
+
+
+def _graph_unavailable_panel(message: str, diag) -> Panel:
+    lines = [f"[red]{message}[/red]", ""]
+    cmds = repair_commands(diag)
+    if cmds:
+        lines.append("[bold]To enable graph context:[/bold]")
+        lines += [f"  [cyan]{c}[/cyan]" for c in cmds]
+        lines.append("")
+    lines.append("Or rerun with [bold]--graph-mode auto[/bold] for direct-probe fallback, "
+                 "or [bold]--graph-mode off[/bold] to skip graph tools.")
+    lines.append("Run [bold]sembl doctor[/bold] for the full report.")
+    return Panel("\n".join(lines),
+                 title="[bold red]Graph context required but unavailable[/bold red]",
+                 border_style="red")
+
+
+def _fix_tools():
+    console.print(f"\n[blue]Installing graph tools:[/blue] {INSTALL_HINT}")
+    console.print("[dim]You passed --fix, so this changes your Python environment.[/dim]")
+    with console.status("[blue]Installing...[/blue]"):
+        ok, out = install_graph_tools()
+    if ok:
+        console.print("[green]Graph tools installed.[/green]\n")
+    else:
+        console.print("[red]Install failed.[/red]")
+        if out:
+            console.print(f"[dim]{out[-600:]}[/dim]")
+        console.print(f"Try manually: [bold]{INSTALL_HINT}[/bold]  or  [bold]{INSTALL_HINT_UV}[/bold]\n")
+
+
+def _render_doctor(diag):
+    keys = [p for p, ok in diag.provider_keys.items() if ok]
+    env_lines = [
+        f"[bold]Sembl[/bold]         {diag.sembl_version}",
+        f"[bold]Python[/bold]        {diag.python_version}  [dim]{diag.python_executable}[/dim]",
+        "[bold]Provider key[/bold]  " + ("[green]" + ", ".join(keys) + "[/green]" if keys else "[yellow]none set[/yellow]"),
+        f"[bold]Repo[/bold]          {diag.repo_path}",
+    ]
+    console.print()
+    console.print(Panel("\n".join(env_lines), title="[bold]Environment[/bold]", border_style="dim"))
+
+    glyph = {"ok": "[green]OK[/green]", "warn": "[yellow]WARN[/yellow]",
+             "missing": "[red]MISSING[/red]", "info": "[dim]INFO[/dim]"}
+    table = Table(box=box.SIMPLE, show_header=True, padding=(0, 1))
+    table.add_column("Check", style="bold")
+    table.add_column("Status")
+    table.add_column("Detail", style="white", overflow="fold")
+    for c in diag.checks:
+        table.add_row(c.name, glyph.get(c.status, c.status), c.detail or "")
+    console.print(table)
+
+    if diag.graph_available:
+        console.print("\n[green]Graph context is available for this repo.[/green]\n")
+    else:
+        console.print("\n[yellow]Graph context is NOT available - auto mode will fall back to direct probing.[/yellow]")
+        cmds = repair_commands(diag)
+        if cmds:
+            lines = ["[bold]Fix it with:[/bold]"]
+            lines += [f"  [cyan]{c}[/cyan]" for c in cmds]
+            if tools_missing(diag):
+                lines += ["", "Shortcut: [bold]sembl doctor --fix[/bold] installs the tools for you."]
+            console.print(Panel("\n".join(lines), border_style="dim"))
+        console.print()
+
 
 def _print_probe_summary(probe, skip_graphify: bool, skip_crg: bool):
     table = Table(box=box.SIMPLE, show_header=False, padding=(0, 1))

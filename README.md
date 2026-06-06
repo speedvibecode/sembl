@@ -26,7 +26,7 @@ Sembl is early but usable for testing. The current CLI supports:
 - repo probing for language/framework/branch/dirty state
 - optional Graphify context
 - optional code-review-graph context
-- graph-required mode with `--require-graph-context`
+- graph diagnostics via `sembl doctor`, and `--graph-mode auto|required|off`
 - LLM graph-impact synthesis over code-review-graph output (`--no-graph-enrichment` to skip)
 - OpenAI, Anthropic, Gemini, and NVIDIA NIM providers
 - work-order output as Markdown, JSON, executor prompt, validation plan, and graph-impact analysis
@@ -108,10 +108,28 @@ graphify update C:\path\to\repo --no-cluster
 code-review-graph build --repo C:\path\to\repo --data-dir C:\path\to\repo-specific-crg-data --skip-flows
 
 $env:CRG_DATA_DIR="C:\path\to\repo-specific-crg-data"
-sembl generate --repo C:\path\to\repo --task "fix the failing login redirect test" --provider nvidia --require-graph-context
+sembl generate --repo C:\path\to\repo --task "fix the failing login redirect test" --provider nvidia --graph-mode required
 ```
 
 Sembl guards against stale generic `CRG_DATA_DIR` values by deriving a repo-specific graph data directory when the env var does not look like it belongs to the target repo.
+
+### Diagnose and control graph context
+
+Run `sembl doctor` first to see exactly what is installed, what is built, and the
+copy-paste command to fix each gap (add `--fix` to install missing graph tools,
+or `--json` for machine-readable output):
+
+```powershell
+sembl doctor --repo C:\path\to\repo
+```
+
+Then choose how generation treats graph context with `--graph-mode`:
+
+- `auto` (default): use graph context if available, otherwise explain what is missing and fall back to direct repo probing.
+- `required`: fail **before** any LLM call if graph context is unavailable, so no tokens are wasted. (`--require-graph-context` is a backward-compatible alias.)
+- `off`: skip Graphify and code-review-graph entirely.
+
+Add `--refresh-graph` to rebuild the graphs (Graphify update + code-review-graph build) before generating.
 
 ## Usage
 
@@ -122,8 +140,14 @@ sembl generate --task "add recurring expenses to this tracker" --provider nvidia
 # Generate for an explicit repo
 sembl generate --repo C:\path\to\repo --task "fix the login redirect bug" --provider nvidia
 
-# Refuse direct-probe fallback
-sembl generate --repo C:\path\to\repo --task "fix the login redirect bug" --provider nvidia --require-graph-context
+# Check the graph subsystem (tools, graphs, keys) and how to fix gaps
+sembl doctor --repo C:\path\to\repo
+
+# Require graph context (fails before any LLM call if it is unavailable)
+sembl generate --repo C:\path\to\repo --task "fix the login redirect bug" --provider nvidia --graph-mode required
+
+# Rebuild the graphs first, then generate on fresh context
+sembl generate --repo C:\path\to\repo --task "fix the login redirect bug" --provider nvidia --refresh-graph
 
 # List Work Orders
 sembl list
