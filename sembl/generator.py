@@ -94,6 +94,9 @@ class WorkOrder:
     patch_expectations: list = field(default_factory=list)
     reporting_format: str = ""
 
+    # Graph intelligence — LLM synthesis over code-review-graph structural output
+    graph_impact_analysis: str = ""
+
     # Reconciliation (filled post-execution)
     reconciliation: dict = field(default_factory=lambda: {
         "status": "pending",
@@ -119,10 +122,15 @@ def generate_work_order(
     model_provider: str = "openai",
     model: Optional[str] = None,
     api_key: Optional[str] = None,
+    enrich_graph: bool = True,
 ) -> WorkOrder:
     """
     Main entry point. Generates a Work Order from task + probe data.
     Calls LLM to produce the 8 locks, then assembles the WorkOrder object.
+
+    When `enrich_graph` is set and code-review-graph structural context is
+    available, an LLM pre-pass first synthesizes that raw graph output into a
+    semantic impact analysis, which then grounds the main generation.
     """
     wo = WorkOrder()
     wo.id = _generate_id(task, probe.project_name)
@@ -134,9 +142,15 @@ def generate_work_order(
     wo.original_request = task
     wo.project_rules = probe.project_rules
 
+    # Optional LLM pre-pass: reason over the structural graph before generating.
+    if enrich_graph:
+        wo.graph_impact_analysis = synthesize_graph_impact(
+            task, probe, model_provider, model, api_key
+        )
+
     # Build the generation prompt
     system_prompt = _build_system_prompt()
-    user_prompt = _build_user_prompt(task, probe)
+    user_prompt = _build_user_prompt(task, probe, wo.graph_impact_analysis)
 
     # Call the LLM
     raw = _call_llm(system_prompt, user_prompt, model_provider, model, api_key)
@@ -146,6 +160,101 @@ def generate_work_order(
     _ground_work_order_in_repo(wo, probe)
 
     return wo
+
+
+# ── Graph impact synthesis (LLM pre-pass over code-review-graph) ───────────────
+
+def _should_enrich(probe: RepoProbe) -> bool:
+    """Only worth an extra LLM call when there is real structural graph signal.
+
+    code-review-graph supplies the deterministic structure (blast radius, node
+    and edge counts). graphify's task context, if present, is folded in as
+    supporting detail. With neither, there is nothing to synthesize.
+    """
+    has_crg_signal = bool(
+        probe.crg_blast_radius or probe.crg_node_count or probe.crg_edge_count
+    )
+    return has_crg_signal or bool(probe.graphify_task_context)
+
+
+def synthesize_graph_impact(
+    task: str,
+    probe: RepoProbe,
+    provider: str = "openai",
+    model: Optional[str] = None,
+    api_key: Optional[str] = None,
+) -> str:
+    """
+    LLM pre-pass that turns code-review-graph's terse structural output into a
+    concise, grounded impact analysis for the task at hand.
+
+    Returns markdown text, or "" when there is nothing to synthesize or the call
+    fails. This step is best-effort and must never block Work Order generation.
+    """
+    if not _should_enrich(probe):
+        return ""
+
+    try:
+        raw = _call_llm(
+            _build_impact_system_prompt(),
+            _build_impact_user_prompt(task, probe),
+            provider,
+            model,
+            api_key,
+        )
+    except Exception:
+        return ""
+
+    return (raw or "").strip()
+
+
+def _build_impact_system_prompt() -> str:
+    return (
+        "You are the graph-analysis stage of Sembl. You receive structural output "
+        "from code-review-graph (a code dependency/impact graph) plus optional "
+        "graphify context, and turn it into a short, concrete impact analysis that a "
+        "later stage will use to scope an AI coding Work Order.\n\n"
+        "Produce concise Markdown with exactly these sections:\n"
+        "- **Blast radius**: what the change is structurally likely to touch, in plain terms.\n"
+        "- **Likely edit targets**: specific files/modules the task probably changes.\n"
+        "- **Hidden coupling / risk**: non-obvious dependents, shared state, or cross-module links.\n"
+        "- **Keep read-only**: files that are relevant context but should not be modified.\n\n"
+        "Rules:\n"
+        "- Ground every claim strictly in the provided graph data. Never invent file names.\n"
+        "- If the data is thin or absent for a section, say so plainly rather than guessing.\n"
+        "- Be terse and specific. No preamble, no restating the task. Under 250 words."
+    )
+
+
+def _build_impact_user_prompt(task: str, probe: RepoProbe) -> str:
+    sections = [f"TASK:\n{task}"]
+
+    if probe.crg_available:
+        sections.append(
+            "CODE-REVIEW-GRAPH — STRUCTURAL STATS:\n"
+            f"Nodes: {probe.crg_node_count} | Edges: {probe.crg_edge_count}\n"
+            f"Languages: {', '.join(probe.crg_languages) or 'unknown'}"
+        )
+    if probe.crg_blast_radius:
+        sections.append(
+            "CODE-REVIEW-GRAPH — IMPACT SUMMARY (raw):\n"
+            + "\n\n".join(probe.crg_blast_radius)
+        )
+    if probe.graphify_task_context:
+        sections.append(
+            "GRAPHIFY — TASK-SPECIFIC SCOPE CONTEXT:\n" + probe.graphify_task_context
+        )
+    if probe.graphify_communities:
+        sections.append("GRAPHIFY — CODE COMMUNITIES:\n" + probe.graphify_communities)
+
+    sections.append(
+        "DIRECT REPO METADATA (secondary):\n"
+        f"Name: {probe.project_name}\n"
+        f"Type: {probe.project_type}\n"
+        f"Top-level dirs: {', '.join(probe.top_level_dirs[:20])}"
+    )
+
+    return "\n\n---\n\n".join(sections)
 
 
 # ── Prompt construction ───────────────────────────────────────────────────────
@@ -215,7 +324,7 @@ If no graph context is present, say so implicitly by producing a conservative, l
 If the probe data reveals project rules or architecture patterns, respect them."""
 
 
-def _build_user_prompt(task: str, probe: RepoProbe) -> str:
+def _build_user_prompt(task: str, probe: RepoProbe, graph_impact: str = "") -> str:
     sections = [f"TASK:\n{task}\n"]
 
     graph_sources = ", ".join(probe.graph_context_sources) or "none"
@@ -233,6 +342,14 @@ def _build_user_prompt(task: str, probe: RepoProbe) -> str:
             "CONTEXT BASIS:\n"
             "Primary graph context unavailable. This is a direct-probe fallback; be conservative "
             "and avoid pretending to know exact files that were not identified."
+        )
+
+    if graph_impact:
+        sections.append(
+            "GRAPH IMPACT ANALYSIS (LLM synthesis of code-review-graph output):\n"
+            "Treat this as primary guidance for scope, editable paths, read-only context, "
+            "and risk. It is already grounded in the structural graph.\n\n"
+            + graph_impact
         )
 
     if probe.graphify_task_context:

@@ -25,6 +25,7 @@ def write_work_order(wo: WorkOrder, repo_path: str) -> Path:
     _write_json(wo, out_dir)
     _write_executor_prompt(wo, out_dir)
     _write_validation_plan(wo, out_dir)
+    _write_graph_impact(wo, out_dir)
 
     return out_dir
 
@@ -243,6 +244,29 @@ def _write_validation_plan(wo: WorkOrder, out_dir: Path):
         lines.append(f"- [ ] {rp}")
 
     _write_markdown_file(out_dir / "validation-plan.md", lines)
+
+
+def _write_graph_impact(wo: WorkOrder, out_dir: Path):
+    """Write the LLM graph-impact synthesis, when one was produced."""
+    target = out_dir / "graph-impact.md"
+    if not wo.graph_impact_analysis:
+        # Remove any stale file from a previous run so the dir stays truthful.
+        if target.exists():
+            target.unlink()
+        return
+
+    lines = [
+        f"# Graph Impact Analysis - {wo.id}",
+        "",
+        "_LLM synthesis over code-review-graph structural output. Grounds the Work Order's"
+        " scope, read-only context, and risk._",
+        "",
+        "---",
+        "",
+        wo.graph_impact_analysis,
+        "",
+    ]
+    _write_markdown_file(target, lines)
 
 
 # Helpers

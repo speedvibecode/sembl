@@ -27,8 +27,9 @@ Sembl is early but usable for testing. The current CLI supports:
 - optional Graphify context
 - optional code-review-graph context
 - graph-required mode with `--require-graph-context`
+- LLM graph-impact synthesis over code-review-graph output (`--no-graph-enrichment` to skip)
 - OpenAI, Anthropic, Gemini, and NVIDIA NIM providers
-- work-order output as Markdown, JSON, executor prompt, and validation plan
+- work-order output as Markdown, JSON, executor prompt, validation plan, and graph-impact analysis
 
 The best test path is graph-first:
 
@@ -132,6 +133,9 @@ sembl show
 
 # Show the executor prompt
 sembl show --file executor-prompt
+
+# Show the graph-impact analysis (when graph context was available)
+sembl show --file graph-impact
 ```
 
 ## Output
@@ -142,7 +146,17 @@ sembl show --file executor-prompt
   executor-prompt.md  - paste into your agent
   validation-plan.md  - run this after
   work-order.json     - machine-readable
+  graph-impact.md     - LLM synthesis of code-review-graph blast radius (graph context only)
 ```
+
+## Graph Impact Synthesis
+
+When code-review-graph context is available, Sembl runs a focused LLM pre-pass
+that turns the graph's terse structural output (blast radius, node/edge counts)
+into a concise, grounded impact analysis: likely edit targets, hidden coupling,
+and files to keep read-only. That synthesis grounds the main Work Order and is
+also written to `graph-impact.md`. It is best-effort - if the provider call
+fails it is skipped silently. Disable it with `--no-graph-enrichment`.
 
 ## The 8 Locks
 

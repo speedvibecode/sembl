@@ -29,7 +29,7 @@ console = Console()
 
 
 @click.group()
-@click.version_option("0.1.0", prog_name="sembl")
+@click.version_option("0.1.1", prog_name="sembl")
 def main():
     """Sembl — turn messy repo intent into scoped AI Work Orders."""
     pass
@@ -55,7 +55,9 @@ def main():
               help="Skip code-review-graph even if available.")
 @click.option("--require-graph-context", is_flag=True, default=False,
               help="Fail instead of using direct-probe fallback when graphify/CRG context is unavailable.")
-def generate(repo, task, provider, model, api_key, no_graphify, no_crg, require_graph_context):
+@click.option("--no-graph-enrichment", is_flag=True, default=False,
+              help="Skip the LLM pre-pass that synthesizes code-review-graph output into an impact analysis.")
+def generate(repo, task, provider, model, api_key, no_graphify, no_crg, require_graph_context, no_graph_enrichment):
     """Generate a Work Order from a repo and a task description."""
 
     repo_path = str(Path(repo).resolve())
@@ -97,6 +99,7 @@ def generate(repo, task, provider, model, api_key, no_graphify, no_crg, require_
                 model_provider=provider,
                 model=model,
                 api_key=api_key,
+                enrich_graph=not no_graph_enrichment,
             )
         except Exception as e:
             console.print(_format_generation_error(e))
@@ -118,7 +121,7 @@ def generate(repo, task, provider, model, api_key, no_graphify, no_crg, require_
 @click.option("--id", "wo_id", default=None,
               help="Work Order ID. Defaults to latest.")
 @click.option("--file", "output_file", default="work-order",
-              type=click.Choice(["work-order", "executor-prompt", "validation-plan"]),
+              type=click.Choice(["work-order", "executor-prompt", "validation-plan", "graph-impact"]),
               show_default=True, help="Which file to show.")
 def show(repo, wo_id, output_file):
     """Show a Work Order. Defaults to the latest one."""
@@ -241,6 +244,8 @@ def _print_work_order_summary(wo, out_dir: Path):
         f"  validation-plan.md  — run this after",
         f"  work-order.json     — machine-readable",
     ]
+    if wo.graph_impact_analysis:
+        lines.append(f"  graph-impact.md     — LLM synthesis of graph blast radius")
 
     console.print(Panel(
         "\n".join(lines),
