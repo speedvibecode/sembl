@@ -190,11 +190,13 @@ If you test Sembl on a real repo, the best feedback is:
 
 ## Releasing
 
-Releases publish to PyPI automatically via GitHub Actions and PyPI Trusted
-Publishing (`.github/workflows/release.yml`). No API token is stored; PyPI
-trusts this repo directly.
+Both channels publish automatically via GitHub Actions and Trusted Publishing
+(OIDC). No API tokens are stored.
 
-To cut a release:
+### Stable releases -> PyPI
+
+`.github/workflows/release.yml` publishes to PyPI when you publish a GitHub
+Release.
 
 1. Bump the version in `pyproject.toml`, `sembl/__init__.py`, and the
    `--version` option in `sembl/cli.py` (all three must match).
@@ -202,7 +204,22 @@ To cut a release:
 3. On GitHub: **Releases -> Draft a new release -> Create a new tag** named
    `v<version>` (e.g. `v0.1.2`, matching the bumped version) -> **Publish**.
 
-The workflow then builds, runs `twine check`, and publishes to PyPI. The tag
-must equal the `pyproject.toml` version or the build fails with a clear error.
+The workflow builds, runs `twine check`, and publishes to PyPI. The tag must
+equal the `pyproject.toml` version or the build fails with a clear error.
+
+### Dev builds -> TestPyPI
+
+`.github/workflows/testpypi.yml` publishes a uniquely-versioned dev build
+(`<version>.devN`) to TestPyPI on every push to `master` that touches code.
+Nothing is committed; the `.devN` suffix is stamped in CI only.
+
+Testers install the latest dev build with:
+
+```powershell
+pip install --pre --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ sembl
+```
+
+Keep `master` on the next in-development version (e.g. after releasing `0.1.1`,
+bump to `0.1.2`) so dev builds sort above the last stable release.
 
 Models write code. Sembl makes the work governable.
