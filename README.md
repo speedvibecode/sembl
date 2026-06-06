@@ -213,10 +213,17 @@ equal the `pyproject.toml` version or the build fails with a clear error.
 (`<version>.devN`) to TestPyPI on every push to `master` that touches code.
 Nothing is committed; the `.devN` suffix is stamped in CI only.
 
-Testers install the latest dev build with:
+Testers install the latest dev build with pip:
 
 ```powershell
 pip install --pre --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ sembl
+```
+
+Or with uv (needs `--prerelease allow` and a best-match index strategy so the
+dev build is preferred over the last stable release):
+
+```powershell
+uv pip install --prerelease allow --index-strategy unsafe-best-match --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ sembl
 ```
 
 Keep `master` on the next in-development version (e.g. after releasing `0.1.1`,
