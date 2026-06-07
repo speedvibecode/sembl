@@ -431,7 +431,7 @@ def _call_openai(system_prompt, user_prompt, model, api_key) -> str:
             {"role": "user", "content": user_prompt},
         ],
         temperature=0.2,
-        max_tokens=4096,
+        max_tokens=8192,
         response_format={"type": "json_object"},
     )
     return response.choices[0].message.content
@@ -446,7 +446,7 @@ def _call_anthropic(system_prompt, user_prompt, model, api_key) -> str:
     m = model or "claude-sonnet-4-6"
     response = client.messages.create(
         model=m,
-        max_tokens=4096,
+        max_tokens=8192,
         system=system_prompt,
         messages=[{"role": "user", "content": user_prompt}],
         temperature=0.2,
@@ -473,7 +473,7 @@ def _call_gemini(system_prompt, user_prompt, model, api_key) -> str:
         ],
         "generationConfig": {
             "temperature": 0.2,
-            "maxOutputTokens": 4096,
+            "maxOutputTokens": 8192,
             "responseMimeType": "application/json",
         },
     }
@@ -535,7 +535,7 @@ def _call_nvidia(system_prompt, user_prompt, model, api_key) -> str:
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.2,
-            max_tokens=4096,
+            max_tokens=8192,
             stream=False,
         )
     except Exception as e:
