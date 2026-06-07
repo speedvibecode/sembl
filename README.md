@@ -1,14 +1,20 @@
 # Sembl
 
-Turn messy repo intent into scoped AI Work Orders.
+[![PyPI](https://img.shields.io/pypi/v/sembl.svg)](https://pypi.org/project/sembl/)
+[![Python](https://img.shields.io/pypi/pyversions/sembl.svg)](https://pypi.org/project/sembl/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Sembl is not an AI coding agent. It is the layer that runs before one:
+Graph-first Work Order generator for AI coding agents.
+
+Sembl turns vague repo tasks into scoped execution contracts before an AI coding
+agent starts editing. Use it with Cursor, Claude Code, Codex, Aider, OpenCode,
+or any executor that can follow a structured prompt.
 
 ```text
 repo + task -> Work Order -> agent executes with tighter scope
 ```
 
-A Work Order is an execution contract. It tells an agent:
+A Work Order tells an agent:
 
 - what the goal is, and what it is not
 - which files it can touch
@@ -17,9 +23,60 @@ A Work Order is an execution contract. It tells an agent:
 - how to prove it succeeded
 - when to stop and ask a human
 
-Website: https://sembl.vercel.app
+[Website](https://sembl.vercel.app) | [PyPI](https://pypi.org/project/sembl/) | [Issues](https://github.com/speedvibecode/sembl/issues)
 
-## Current Status
+## Why Sembl
+
+AI coding agents are strong executors, but loose prompts still create avoidable
+failure modes: broad edits, fake validation commands, missed test context, and
+unclear stop conditions.
+
+Sembl sits before execution:
+
+1. It probes the repo.
+2. It uses Graphify and code-review-graph when available.
+3. It asks an LLM to produce a strict Work Order.
+4. It writes Markdown and JSON outputs that another agent can execute.
+
+The result is not "more autonomy." It is a narrower, clearer packet of work.
+
+## Quickstart
+
+```powershell
+pip install "sembl[graph-pipeline]"
+
+$env:NVIDIA_API_KEY="..."
+sembl doctor --repo C:\path\to\repo
+sembl generate --repo C:\path\to\repo --task "fix the failing login redirect test" --provider nvidia --graph-mode required --refresh-graph
+```
+
+For a core install without Graphify/code-review-graph:
+
+```powershell
+pip install sembl
+```
+
+## Example Output
+
+```text
+Work Order generated
+
+Goal: Fix the failing login redirect test by correcting redirect behavior after successful authentication
+Outcome: Users are correctly redirected to the intended destination after logging in
+Task type: bugfix | Risk: MEDIUM
+
+Acceptance criteria: 5 items
+Validation commands: 4 commands
+Stop conditions: 5 triggers
+
+Output: .sembl/work-orders/wo-project-.../
+```
+
+The generated folder contains `work-order.md`, `executor-prompt.md`,
+`validation-plan.md`, `work-order.json`, and graph impact notes when graph
+context is available.
+
+## Status
 
 Sembl is early but usable for testing. The current CLI supports:
 
@@ -30,13 +87,6 @@ Sembl is early but usable for testing. The current CLI supports:
 - LLM graph-impact synthesis over code-review-graph output (`--no-graph-enrichment` to skip)
 - OpenAI, Anthropic, Gemini, and NVIDIA NIM providers
 - work-order output as Markdown, JSON, executor prompt, validation plan, and graph-impact analysis
-
-The best test path is graph-first:
-
-```powershell
-pip install "sembl[graph-pipeline]"
-sembl generate --repo C:\path\to\repo --task "fix the failing login redirect test" --provider nvidia --require-graph-context
-```
 
 ## Install
 
@@ -214,8 +264,9 @@ If you test Sembl on a real repo, the best feedback is:
 
 ## Releasing
 
-Both channels publish automatically via GitHub Actions and Trusted Publishing
-(OIDC). No API tokens are stored.
+Publishing uses GitHub Actions and Trusted Publishing (OIDC). Stable releases
+publish from GitHub Releases; TestPyPI dev builds are manual. No API tokens are
+stored.
 
 ### Stable releases -> PyPI
 
@@ -226,7 +277,7 @@ Release.
    `--version` option in `sembl/cli.py` (all three must match).
 2. Commit and push.
 3. On GitHub: **Releases -> Draft a new release -> Create a new tag** named
-   `v<version>` (e.g. `v0.1.2`, matching the bumped version) -> **Publish**.
+   `v<version>` (for example, `v0.1.3`, matching the bumped version) -> **Publish**.
 
 The workflow builds, runs `twine check`, and publishes to PyPI. The tag must
 equal the `pyproject.toml` version or the build fails with a clear error.
@@ -250,7 +301,8 @@ dev build is preferred over the last stable release):
 uv pip install --prerelease allow --index-strategy unsafe-best-match --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ sembl
 ```
 
-Keep `master` on the next in-development version (e.g. after releasing `0.1.1`,
-bump to `0.1.2`) so dev builds sort above the last stable release.
+Before cutting TestPyPI dev builds after a stable release, bump `master` to the
+next patch or minor version (for example, after releasing `0.1.3`, bump to
+`0.1.4`) so dev builds sort above the last stable release.
 
 Models write code. Sembl makes the work governable.

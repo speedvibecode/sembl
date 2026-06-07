@@ -1,7 +1,7 @@
 name: Publish dev build to TestPyPI
 
-# On every push to master (code changes), build a uniquely-versioned dev build
-# (e.g. 0.1.2.dev7) and publish it to TestPyPI. Testers install the latest with:
+# When manually triggered, build a uniquely-versioned dev build (for example,
+# <base>.dev7) and publish it to TestPyPI. Testers install the latest with:
 #
 #   pip install --pre -i https://test.pypi.org/simple/ \
 #     --extra-index-url https://pypi.org/simple/ sembl
