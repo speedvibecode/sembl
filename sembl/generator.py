@@ -1035,6 +1035,7 @@ def _dedupe(items: list[str]) -> list[str]:
 def _load_json_object(raw: str) -> dict:
     """Load provider JSON while tolerating common LLM formatting defects."""
     cleaned = _extract_json_object(_strip_markdown_fence(raw))
+    cleaned_structural = _strip_garbage_before_property_names(cleaned)
 
     attempts = [
         (cleaned, True),
@@ -1042,6 +1043,10 @@ def _load_json_object(raw: str) -> dict:
         (_escape_control_chars_in_strings(cleaned), True),
         (_escape_invalid_json_escapes_in_strings(cleaned), True),
         (_escape_invalid_json_escapes_in_strings(_escape_control_chars_in_strings(cleaned)), True),
+        (cleaned_structural, True),
+        (_escape_control_chars_in_strings(cleaned_structural), True),
+        (_escape_invalid_json_escapes_in_strings(cleaned_structural), True),
+        (_escape_invalid_json_escapes_in_strings(_escape_control_chars_in_strings(cleaned_structural)), True),
     ]
 
     last_error: json.JSONDecodeError | None = None
@@ -1174,6 +1179,41 @@ def _escape_invalid_json_escapes_in_strings(text: str) -> str:
         if ch == '"':
             in_string = True
         i += 1
+
+    return "".join(out)
+
+
+def _strip_garbage_before_property_names(text: str) -> str:
+    """Remove provider junk inserted before object property names.
+
+    Some models occasionally insert a stray token at the beginning of an object
+    property line, for example `aaa  "reporting_format": ...`. This keeps the
+    repair outside JSON strings and only trims a simple word prefix immediately
+    before a quoted property key.
+    """
+    out = []
+    in_string = False
+    escaped = False
+
+    for line in text.splitlines(keepends=True):
+        if not in_string:
+            line = re.sub(
+                r'^(\s*)[A-Za-z_][A-Za-z0-9_-]*\s+("[A-Za-z_][A-Za-z0-9_]*"\s*:)',
+                r'\1\2',
+                line,
+            )
+
+        for ch in line:
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_string = False
+            elif ch == '"':
+                in_string = True
+        out.append(line)
 
     return "".join(out)
 

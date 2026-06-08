@@ -95,6 +95,17 @@ class GeneratorJsonRepairTests(unittest.TestCase):
 
         self.assertEqual(wo.executor_prompt, 'Line one\nLine two with quote: "ok"')
 
+    def test_repairs_junk_prefix_before_property_name(self):
+        wo = WorkOrder()
+
+        raw = _raw_work_order("Prompt").replace(
+            '  "reporting_format":',
+            'aaa  "reporting_format":',
+        )
+        _parse_llm_response(raw, wo, RepoProbe(repo_path="C:/repo"))
+
+        self.assertEqual(wo.reporting_format, "Report files changed")
+
 
 class GeneratorGroundingTests(unittest.TestCase):
     def test_removes_hallucinated_paths_and_adds_repo_real_graph_paths(self):
