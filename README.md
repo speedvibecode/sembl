@@ -85,7 +85,7 @@ Sembl is early but usable for testing. The current CLI supports:
 - optional code-review-graph context
 - graph diagnostics via `sembl doctor`, and `--graph-mode auto|required|off`
 - LLM graph-impact synthesis over code-review-graph output (`--no-graph-enrichment` to skip)
-- OpenAI, Anthropic, Gemini, and NVIDIA NIM providers
+- OpenAI, Anthropic, Gemini, NVIDIA NIM, and OpenRouter providers
 - work-order output as Markdown, JSON, executor prompt, validation plan, and graph-impact analysis
 
 ## Install
@@ -141,12 +141,16 @@ $env:OPENAI_API_KEY="..."
 $env:ANTHROPIC_API_KEY="..."
 $env:GEMINI_API_KEY="..."
 $env:NVIDIA_API_KEY="..."
+$env:OPENROUTER_API_KEY="..."
 ```
 
-Then choose the provider:
+Then choose the provider (`openai`, `anthropic`, `gemini`, `nvidia`, or `openrouter`):
 
 ```powershell
 sembl generate --repo C:\path\to\repo --task "replace starter screen text" --provider nvidia
+
+# OpenRouter (OpenAI-compatible) routes to any model in its catalog:
+sembl generate --repo C:\path\to\repo --task "replace starter screen text" --provider openrouter --model moonshotai/kimi-k2
 ```
 
 ## Optional Graph Context
