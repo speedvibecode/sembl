@@ -1040,6 +1040,8 @@ def _load_json_object(raw: str) -> dict:
         (cleaned, True),
         (cleaned, False),
         (_escape_control_chars_in_strings(cleaned), True),
+        (_escape_invalid_json_escapes_in_strings(cleaned), True),
+        (_escape_invalid_json_escapes_in_strings(_escape_control_chars_in_strings(cleaned)), True),
     ]
 
     last_error: json.JSONDecodeError | None = None
@@ -1126,6 +1128,52 @@ def _escape_control_chars_in_strings(text: str) -> str:
         out.append(ch)
         if ch == '"':
             in_string = True
+
+    return "".join(out)
+
+
+def _escape_invalid_json_escapes_in_strings(text: str) -> str:
+    out = []
+    in_string = False
+    valid_single_char_escapes = {'"', "\\", "/", "b", "f", "n", "r", "t"}
+    hex_digits = set("0123456789abcdefABCDEF")
+    i = 0
+
+    while i < len(text):
+        ch = text[i]
+        if in_string:
+            if ch == "\\":
+                next_ch = text[i + 1] if i + 1 < len(text) else ""
+                if next_ch in valid_single_char_escapes:
+                    out.append(ch)
+                    out.append(next_ch)
+                    i += 2
+                    continue
+                if (
+                    next_ch == "u"
+                    and i + 5 < len(text)
+                    and all(c in hex_digits for c in text[i + 2:i + 6])
+                ):
+                    out.append(text[i:i + 6])
+                    i += 6
+                    continue
+                out.append("\\")
+                out.append("\\")
+                i += 1
+                continue
+            if ch == '"':
+                out.append(ch)
+                in_string = False
+                i += 1
+                continue
+            out.append(ch)
+            i += 1
+            continue
+
+        out.append(ch)
+        if ch == '"':
+            in_string = True
+        i += 1
 
     return "".join(out)
 

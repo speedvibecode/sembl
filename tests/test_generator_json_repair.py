@@ -70,6 +70,31 @@ class GeneratorJsonRepairTests(unittest.TestCase):
 
         self.assertEqual(wo.executor_prompt, "Prompt")
 
+    def test_repairs_invalid_backslash_escape_inside_string(self):
+        wo = WorkOrder()
+
+        _parse_llm_response(
+            _raw_work_order("Use ScalarFormatter. Bad provider escape: \\ mothership"),
+            wo,
+            RepoProbe(repo_path="C:/repo"),
+        )
+
+        self.assertEqual(
+            wo.executor_prompt,
+            "Use ScalarFormatter. Bad provider escape: \\ mothership",
+        )
+
+    def test_keeps_valid_json_escapes_inside_string(self):
+        wo = WorkOrder()
+
+        _parse_llm_response(
+            _raw_work_order(r"Line one\nLine two with quote: \"ok\""),
+            wo,
+            RepoProbe(repo_path="C:/repo"),
+        )
+
+        self.assertEqual(wo.executor_prompt, 'Line one\nLine two with quote: "ok"')
+
 
 class GeneratorGroundingTests(unittest.TestCase):
     def test_removes_hallucinated_paths_and_adds_repo_real_graph_paths(self):
