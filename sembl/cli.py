@@ -55,7 +55,7 @@ def main():
 @click.option("--task",     "-t", required=True,
               help="The task or request to turn into a Work Order.")
 @click.option("--provider", "-p", default="openai",
-              type=click.Choice(["openai", "anthropic", "gemini", "nvidia"], case_sensitive=False),
+              type=click.Choice(["openai", "anthropic", "gemini", "nvidia", "openrouter"], case_sensitive=False),
               show_default=True, help="LLM provider.")
 @click.option("--model",    "-m", default=None,
               help="Model name. Defaults to gpt-4o (openai), claude-sonnet-4-6 (anthropic), gemini-2.5-flash (gemini), or mistralai/mistral-medium-3.5-128b (nvidia).")
@@ -443,6 +443,7 @@ def _check_api_key(provider: str, api_key: str | None):
         "anthropic": "ANTHROPIC_API_KEY",
         "gemini": "GEMINI_API_KEY",
         "nvidia": "NVIDIA_API_KEY",
+        "openrouter": "OPENROUTER_API_KEY",
     }
     env_key = env_keys[provider.lower()]
     if not api_key and not os.environ.get(env_key):

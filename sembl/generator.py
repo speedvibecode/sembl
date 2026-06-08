@@ -412,6 +412,8 @@ def _call_llm(
         return _call_gemini(system_prompt, user_prompt, model, api_key)
     if provider == "nvidia":
         return _call_nvidia(system_prompt, user_prompt, model, api_key)
+    if provider == "openrouter":
+        return _call_openrouter(system_prompt, user_prompt, model, api_key)
     if provider == "openai":
         return _call_openai(system_prompt, user_prompt, model, api_key)
     raise ValueError(f"Unsupported provider: {provider}")
@@ -542,6 +544,51 @@ def _call_nvidia(system_prompt, user_prompt, model, api_key) -> str:
         raise ProviderAPIError(
             str(e),
             provider="nvidia",
+            status_code=getattr(e, "status_code", None),
+            code=getattr(e, "code", None),
+        ) from None
+
+    return response.choices[0].message.content or ""
+
+
+def _call_openrouter(system_prompt, user_prompt, model, api_key) -> str:
+    """OpenRouter is OpenAI-API-compatible; same client, different base URL + key.
+
+    Routes to any model in OpenRouter's catalog (e.g. moonshotai/kimi-k2,
+    deepseek/deepseek-chat). No response_format is forced, for broad model
+    compatibility — Sembl's parser handles raw JSON text.
+    """
+    from openai import OpenAI
+
+    key = api_key or os.environ.get("OPENROUTER_API_KEY")
+    if not key:
+        raise ValueError("No OpenRouter API key. Set OPENROUTER_API_KEY or pass --api-key.")
+
+    client = OpenAI(
+        api_key=key,
+        base_url="https://openrouter.ai/api/v1",
+    )
+    m = model or "moonshotai/kimi-k2"
+
+    try:
+        response = client.chat.completions.create(
+            model=m,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.2,
+            max_tokens=8192,
+            stream=False,
+            extra_headers={
+                "HTTP-Referer": "https://github.com/speedvibecode/sembl",
+                "X-Title": "sembl",
+            },
+        )
+    except Exception as e:
+        raise ProviderAPIError(
+            str(e),
+            provider="openrouter",
             status_code=getattr(e, "status_code", None),
             code=getattr(e, "code", None),
         ) from None
