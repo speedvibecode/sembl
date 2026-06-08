@@ -1035,7 +1035,9 @@ def _dedupe(items: list[str]) -> list[str]:
 def _load_json_object(raw: str) -> dict:
     """Load provider JSON while tolerating common LLM formatting defects."""
     cleaned = _extract_json_object(_strip_markdown_fence(raw))
-    cleaned_structural = _strip_garbage_before_property_names(cleaned)
+    cleaned_structural = _quote_unquoted_property_names(
+        _strip_garbage_before_property_names(cleaned)
+    )
 
     attempts = [
         (cleaned, True),
@@ -1200,6 +1202,39 @@ def _strip_garbage_before_property_names(text: str) -> str:
             line = re.sub(
                 r'^(\s*)[A-Za-z_][A-Za-z0-9_-]*\s+("[A-Za-z_][A-Za-z0-9_]*"\s*:)',
                 r'\1\2',
+                line,
+            )
+
+        for ch in line:
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_string = False
+            elif ch == '"':
+                in_string = True
+        out.append(line)
+
+    return "".join(out)
+
+
+def _quote_unquoted_property_names(text: str) -> str:
+    """Quote simple unquoted object property names outside strings.
+
+    Repairs model output such as `tests_to_inspect: [...]` while avoiding prose
+    inside string values.
+    """
+    out = []
+    in_string = False
+    escaped = False
+
+    for line in text.splitlines(keepends=True):
+        if not in_string:
+            line = re.sub(
+                r'^(\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:',
+                r'\1"\2":',
                 line,
             )
 
