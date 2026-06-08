@@ -41,7 +41,7 @@ console = Console()
 
 
 @click.group()
-@click.version_option("0.1.3", prog_name="sembl")
+@click.version_option("0.1.4", prog_name="sembl")
 def main():
     """Sembl — turn messy repo intent into scoped AI Work Orders."""
     pass
