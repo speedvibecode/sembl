@@ -738,19 +738,30 @@ def _ground_work_order_in_repo(wo: WorkOrder, probe: RepoProbe):
         ),
         wo.original_request,
     )[:10]
+    # Trusted editable sources: the LLM's own picks and graph-surfaced editable files.
+    # These survive the keyword-score filter below — the keyword heuristic is weak and
+    # web/auth-biased, so without this a graph-identified gold file whose path lacks task
+    # terms (score 0) would be silently dropped (this is why graph context never moved
+    # editable_paths). Generic repo keyword hits still require score > 0.
+    graph_editable = [
+        path for path in graph_paths
+        if (root / path).is_file() and _is_editable_candidate(path, wo.original_request)
+    ]
+    llm_editable = [
+        path for path in _valid_existing_paths(wo.editable_paths, root)
+        if _is_editable_candidate(path, wo.original_request)
+    ]
+    trusted_editable = set(llm_editable) | set(graph_editable)
     wo.editable_paths = [
         path for path in _rank_task_paths(
             _merge_existing_paths(
-                [
-                    path for path in _valid_existing_paths(wo.editable_paths, root)
-                    if _is_editable_candidate(path, wo.original_request)
-                ],
-                editable_candidates,
+                llm_editable,
+                _dedupe(graph_editable + editable_candidates),
                 max_items=30,
             ),
             wo.original_request,
         )
-        if _task_path_score(path, wo.original_request) > 0
+        if _task_path_score(path, wo.original_request) > 0 or path in trusted_editable
     ][:8]
     wo.files_to_inspect = _rank_task_paths(
         _merge_existing_paths(
@@ -825,18 +836,24 @@ def _sentence_list(values: list) -> str:
 
 
 def _extract_paths_from_text(text: str, root: Path) -> list[str]:
+    """Pull repo-relative file/dir paths out of free text (graph output, prose).
+
+    Layout-agnostic: matches any multi-segment path token ending in an extension
+    (e.g. `crosstl/backend/DirectX/DirectxParser.py`, `src/app/foo.ts`), including
+    graphify's `src=<path>` node tokens, and validates each against the real repo.
+    The previous version only matched a hardcoded JS/web prefix list (src/app/tests/
+    supabase/package.json/...), so it extracted NOTHING from Python repos — graph file
+    signal never reached editable_paths.
+    """
     if not text:
         return []
 
+    normalized = text.replace("\\", "/")
     candidates = []
-    pattern = re.compile(
-        r"(?<![\w.-])((?:src|app|tests|__tests__|supabase|package\.json|tsconfig\.json|README\.md)"
-        r"[\w./()@+\-\[\]]*)"
-    )
-    for match in pattern.finditer(text):
+    # `seg/seg.../name.ext` (>=1 slash, a file extension), optional `src=` prefix.
+    file_pat = re.compile(r"(?:src=)?([\w.\-]+(?:/[\w.\-]+)+\.[A-Za-z0-9]+)")
+    for match in file_pat.finditer(normalized):
         path = _clean_path(match.group(1))
-        if path in {"src", "app", "tests", "__tests__", "supabase"}:
-            continue
         if path and _path_exists(root, path):
             candidates.append(path)
     return _dedupe(candidates)
