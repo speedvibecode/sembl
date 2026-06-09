@@ -22,13 +22,14 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Verify release tag matches pyproject version
+      - name: Verify release tag and all version surfaces agree
         run: |
           TAG="${GITHUB_REF_NAME#v}"
           VER="$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")"
-          echo "release tag: $TAG | pyproject version: $VER"
-          if [ "$TAG" != "$VER" ]; then
-            echo "::error::Release tag '$TAG' does not match pyproject version '$VER'. Bump the version (pyproject.toml, sembl/__init__.py, sembl/cli.py) and create a matching tag."
+          INIT="$(python -c "import re;print(re.search(r'__version__\s*=\s*\"([^\"]+)\"', open('sembl/__init__.py').read()).group(1))")"
+          echo "release tag: $TAG | pyproject: $VER | __init__: $INIT"
+          if [ "$TAG" != "$VER" ] || [ "$VER" != "$INIT" ]; then
+            echo "::error::Version mismatch (tag '$TAG', pyproject '$VER', __init__ '$INIT'). They must all match. cli.py now derives from __init__. See VERSIONING.md."
             exit 1
           fi
 

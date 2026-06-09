@@ -24,6 +24,7 @@ from rich.table import Table
 from rich.text import Text
 from rich import box
 
+from . import __version__
 from .repo_probe import probe_repo, _crg_common_args, _crg_env
 from .generator import generate_work_order
 from .output import write_work_order
@@ -41,7 +42,7 @@ console = Console()
 
 
 @click.group()
-@click.version_option("0.1.5", prog_name="sembl")
+@click.version_option(__version__, prog_name="sembl")
 def main():
     """Sembl — turn messy repo intent into scoped AI Work Orders."""
     pass
