@@ -440,8 +440,16 @@ def _find_wo_dir(repo_path: Path, wo_id: str | None) -> Path | None:
 
 def _check_api_key(provider: str, api_key: str | None):
     # Local providers need no API key.
-    if provider.lower() == "ollama":
+    provider_key = provider.lower()
+    if provider_key == "ollama":
         return
+    provider_names = {
+        "openai": "OpenAI",
+        "anthropic": "Anthropic",
+        "gemini": "Gemini",
+        "nvidia": "NVIDIA",
+        "openrouter": "OpenRouter",
+    }
     env_keys = {
         "openai": "OPENAI_API_KEY",
         "anthropic": "ANTHROPIC_API_KEY",
@@ -449,10 +457,19 @@ def _check_api_key(provider: str, api_key: str | None):
         "nvidia": "NVIDIA_API_KEY",
         "openrouter": "OPENROUTER_API_KEY",
     }
-    env_key = env_keys[provider.lower()]
+    env_key = env_keys[provider_key]
     if not api_key and not os.environ.get(env_key):
-        console.print(f"\n[red]No API key found.[/red]")
-        console.print(f"Set [bold]{env_key}[/bold] or pass [bold]--api-key[/bold].\n")
+        provider_name = provider_names.get(provider_key, provider)
+        console.print(f"\n[red]No {provider_name} API key is set.[/red]")
+        console.print(
+            f"Set [bold]{env_key}[/bold] in your shell or rerun with "
+            "[bold]--api-key[/bold]."
+        )
+        console.print(f"PowerShell: [bold]$env:{env_key}=\"...\"[/bold]")
+        console.print(
+            "For local generation without a provider key, rerun with "
+            "[bold]--provider ollama[/bold].\n"
+        )
         sys.exit(1)
 
 

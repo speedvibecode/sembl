@@ -282,8 +282,8 @@ stored.
 `.github/workflows/release.yml` publishes to PyPI when you publish a GitHub
 Release.
 
-1. Bump the version in `pyproject.toml`, `sembl/__init__.py`, and the
-   `--version` option in `sembl/cli.py` (all three must match).
+1. Bump the version in `pyproject.toml` and `sembl/__init__.py`
+   (`sembl --version` is derived from `sembl/__init__.py`).
 2. Commit and push.
 3. On GitHub: **Releases -> Draft a new release -> Create a new tag** named
    `v<version>` (for example, `v0.1.3`, matching the bumped version) -> **Publish**.

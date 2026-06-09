@@ -116,6 +116,37 @@ TASK_TYPES = [
 ]
 
 
+IGNORED_REPO_PATH_PARTS = {
+    ".git",
+    ".crg-data",
+    ".crg-home",
+    ".expo",
+    ".mypy_cache",
+    ".next",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".sembl",
+    ".turbo",
+    ".uv-cache",
+    ".venv",
+    "__pycache__",
+    "build",
+    "coverage",
+    "dist",
+    "graphify-out",
+    "htmlcov",
+    "node_modules",
+    "site-packages",
+    "venv",
+    "web-build",
+}
+IGNORED_REPO_PATH_GLOBS = {
+    "*.egg-info",
+    "*.pyc",
+    "*.pyo",
+}
+
+
 def generate_work_order(
     task: str,
     probe: RepoProbe,
@@ -709,6 +740,7 @@ def _ground_work_order_in_repo(wo: WorkOrder, probe: RepoProbe):
     if not root.exists():
         return
 
+    ignored = _ignored_repo_path_patterns(root)
     graph_paths = _rank_task_paths(
         _extract_paths_from_text(
             "\n".join(
@@ -720,10 +752,14 @@ def _ground_work_order_in_repo(wo: WorkOrder, probe: RepoProbe):
                 ]
             ),
             root,
+            ignored,
         ),
         wo.original_request,
     )
-    repo_hits = _rank_task_paths(_scan_task_related_paths(root, wo.original_request), wo.original_request)
+    repo_hits = _rank_task_paths(
+        _scan_task_related_paths(root, wo.original_request, ignored),
+        wo.original_request,
+    )
     candidate_paths = _dedupe(graph_paths + repo_hits)
     candidate_files = [path for path in candidate_paths if (root / path).is_file()]
     candidate_test_files = [path for path in candidate_files if _looks_like_test_path(path)]
@@ -732,7 +768,7 @@ def _ground_work_order_in_repo(wo: WorkOrder, probe: RepoProbe):
 
     wo.likely_affected_areas = _rank_task_paths(
         _merge_existing_paths(
-            _valid_existing_paths(wo.likely_affected_areas, root),
+            _valid_existing_paths(wo.likely_affected_areas, root, ignored),
             _dedupe(candidate_areas + _parent_dirs(candidate_files)),
             max_items=30,
         ),
@@ -748,42 +784,43 @@ def _ground_work_order_in_repo(wo: WorkOrder, probe: RepoProbe):
         if (root / path).is_file() and _is_editable_candidate(path, wo.original_request)
     ]
     llm_editable = [
-        path for path in _valid_existing_paths(wo.editable_paths, root)
+        path for path in _valid_existing_paths(wo.editable_paths, root, ignored)
         if _is_editable_candidate(path, wo.original_request)
     ]
-    trusted_editable = set(llm_editable) | set(graph_editable)
-    wo.editable_paths = [
-        path for path in _rank_task_paths(
-            _merge_existing_paths(
-                llm_editable,
-                _dedupe(graph_editable + editable_candidates),
-                max_items=30,
-            ),
-            wo.original_request,
-        )
-        if _task_path_score(path, wo.original_request) > 0 or path in trusted_editable
-    ][:8]
+    direct_editable = [path for path in editable_candidates if path not in set(graph_editable)]
+    wo.editable_paths = _rank_editable_paths(
+        llm_editable,
+        graph_editable,
+        direct_editable,
+        wo.original_request,
+    )[:8]
     wo.files_to_inspect = _rank_task_paths(
         _merge_existing_paths(
-            _valid_existing_files(wo.files_to_inspect, root),
+            _valid_existing_files(wo.files_to_inspect, root, ignored),
             candidate_files,
             max_items=30,
         ),
         wo.original_request,
     )[:12]
     wo.read_only_context = _merge_existing_paths(
-        _valid_existing_paths(wo.read_only_context, root),
+        _valid_existing_paths(wo.read_only_context, root, ignored),
         _read_only_context_paths(root, candidate_paths),
         max_items=10,
     )
     wo.tests_to_inspect = _merge_existing_paths(
-        _valid_existing_paths(wo.tests_to_inspect, root),
+        _ground_test_context_paths(
+            wo.tests_to_inspect,
+            root,
+            wo.original_request,
+            candidate_test_files,
+            ignored,
+        ),
         candidate_test_files,
         max_items=8,
     )
 
     if not _has_existing_test_path(root, wo.tests_to_inspect):
-        wo.tests_to_add_or_update = _valid_new_test_paths(wo.tests_to_add_or_update, root)
+        wo.tests_to_add_or_update = _valid_new_test_paths(wo.tests_to_add_or_update, root, ignored)
         _append_unique(
             wo.stop_conditions,
             "No failing test file is present in the repo; ask the human for the exact failing test path before changing implementation.",
@@ -794,6 +831,12 @@ def _ground_work_order_in_repo(wo: WorkOrder, probe: RepoProbe):
         probe,
         root,
         candidate_test_files,
+    )
+    wo.patch_expectations = _ground_patch_expectations(
+        wo.patch_expectations,
+        root,
+        wo.editable_paths,
+        ignored,
     )
     _refresh_executor_prompt_from_grounded_fields(wo)
 
@@ -835,7 +878,11 @@ def _sentence_list(values: list) -> str:
     return "; ".join(str(value).strip() for value in values if str(value).strip())
 
 
-def _extract_paths_from_text(text: str, root: Path) -> list[str]:
+def _extract_paths_from_text(
+    text: str,
+    root: Path,
+    ignored_patterns: set[str] | None = None,
+) -> list[str]:
     """Pull repo-relative file/dir paths out of free text (graph output, prose).
 
     Layout-agnostic: matches any multi-segment path token ending in an extension
@@ -850,16 +897,21 @@ def _extract_paths_from_text(text: str, root: Path) -> list[str]:
 
     normalized = text.replace("\\", "/")
     candidates = []
-    # `seg/seg.../name.ext` (>=1 slash, a file extension), optional `src=` prefix.
-    file_pat = re.compile(r"(?:src=)?([\w.\-]+(?:/[\w.\-]+)+\.[A-Za-z0-9]+)")
+    # `seg/seg.../name.ext` (>=1 slash, a file extension), optional `src=`
+    # prefix. Allows common route/module chars: (), [], @, +.
+    file_pat = re.compile(r"(?:src=)?([A-Za-z0-9_.@+\-()[\]]+(?:/[A-Za-z0-9_.@+\-()[\]]+)+\.[A-Za-z0-9]+)")
     for match in file_pat.finditer(normalized):
         path = _clean_path(match.group(1))
-        if path and _path_exists(root, path):
+        if path and _is_repo_source_path(path, ignored_patterns) and _path_exists(root, path):
             candidates.append(path)
     return _dedupe(candidates)
 
 
-def _scan_task_related_paths(root: Path, task: str) -> list[str]:
+def _scan_task_related_paths(
+    root: Path,
+    task: str,
+    ignored_patterns: set[str] | None = None,
+) -> list[str]:
     terms = set(_task_terms(task))
     if {"login", "redirect", "signin", "session"} & terms:
         terms.update({"auth", "callback", "oauth", "signin", "session", "login"})
@@ -867,17 +919,12 @@ def _scan_task_related_paths(root: Path, task: str) -> list[str]:
         return []
 
     results = []
-    skip_dirs = {
-        ".git", ".expo", ".venv", "venv", "node_modules", "dist", "build",
-        "web-build", "graphify-out", ".sembl", ".crg-data",
-    }
     extensions = {".ts", ".tsx", ".js", ".jsx", ".py"}
 
     for path in root.rglob("*"):
-        rel_parts = path.relative_to(root).parts
-        if any(part in skip_dirs for part in rel_parts):
-            continue
         rel = path.relative_to(root).as_posix()
+        if not _is_repo_source_path(rel, ignored_patterns):
+            continue
         haystack = rel.lower()
         if path.is_dir():
             if any(term in haystack for term in terms):
@@ -903,6 +950,33 @@ def _rank_task_paths(paths: list[str], task: str) -> list[str]:
         return (-_task_path_score(path, task), len(path), path)
 
     return sorted(_dedupe(paths), key=score)
+
+
+def _rank_editable_paths(
+    llm_paths: list[str],
+    graph_paths: list[str],
+    direct_paths: list[str],
+    task: str,
+) -> list[str]:
+    """Rank edit scope by provenance before weak path-name heuristics.
+
+    Graph-surfaced files are deliberate structural context. They must outrank
+    non-graph LLM picks and direct scans, or graph-on runs can stay identical to
+    graph-off when an 8-item LLM list crowds graph candidates out.
+    """
+    graph_set = set(graph_paths)
+    llm_set = set(llm_paths)
+
+    def score(path: str) -> tuple[int, int, int, str]:
+        if path in graph_set:
+            provenance = 0
+        elif path in llm_set:
+            provenance = 1
+        else:
+            provenance = 2
+        return (provenance, -_task_path_score(path, task), len(path), path)
+
+    return sorted(_dedupe(llm_paths + graph_paths + direct_paths), key=score)
 
 
 def _task_path_score(path: str, task: str) -> int:
@@ -949,34 +1023,86 @@ def _task_terms(task: str) -> list[str]:
     ]
 
 
-def _valid_existing_paths(values: list, root: Path) -> list[str]:
+def _valid_existing_paths(
+    values: list,
+    root: Path,
+    ignored_patterns: set[str] | None = None,
+) -> list[str]:
     valid = []
     for value in values or []:
         path = _clean_path(str(value))
-        if path and _path_exists(root, path):
+        if path and _is_repo_source_path(path, ignored_patterns) and _path_exists(root, path):
             valid.append(path)
     return _dedupe(valid)
 
 
-def _valid_existing_files(values: list, root: Path) -> list[str]:
+def _valid_existing_files(
+    values: list,
+    root: Path,
+    ignored_patterns: set[str] | None = None,
+) -> list[str]:
     valid = []
     for value in values or []:
         path = _clean_path(str(value))
-        if path and (root / path).is_file():
+        if path and _is_repo_source_path(path, ignored_patterns) and (root / path).is_file():
             valid.append(path)
     return _dedupe(valid)
 
 
-def _valid_new_test_paths(values: list, root: Path) -> list[str]:
+def _valid_new_test_paths(
+    values: list,
+    root: Path,
+    ignored_patterns: set[str] | None = None,
+) -> list[str]:
     valid = []
     for value in values or []:
         path = _clean_path(str(value))
         if not path:
             continue
         parent = (root / path).parent
-        if _looks_like_test_path(path) and parent.exists():
+        if _is_repo_source_path(path, ignored_patterns) and _looks_like_test_path(path) and parent.exists():
             valid.append(path)
     return _dedupe(valid)
+
+
+def _ground_test_context_paths(
+    values: list,
+    root: Path,
+    task: str,
+    candidate_test_files: list[str],
+    ignored_patterns: set[str] | None = None,
+) -> list[str]:
+    """Keep existing LLM test picks only when they are task-grounded."""
+    candidate_set = set(candidate_test_files)
+    valid = _valid_existing_paths(values, root, ignored_patterns)
+    return [
+        path for path in valid
+        if path in candidate_set or _task_path_score(path, task) > 0
+    ]
+
+
+def _ground_patch_expectations(
+    values: list,
+    root: Path,
+    editable_paths: list[str],
+    ignored_patterns: set[str] | None = None,
+) -> list[str]:
+    grounded = []
+    for value in values or []:
+        text = str(value).strip()
+        if not text:
+            continue
+        path_tokens = _extract_path_like_tokens(text)
+        if path_tokens and any(
+            not _is_repo_source_path(path, ignored_patterns) or not _path_exists(root, path)
+            for path in path_tokens
+        ):
+            continue
+        grounded.append(text)
+
+    if not grounded and editable_paths:
+        grounded.append("Keep implementation changes within the grounded editable paths.")
+    return _dedupe(grounded)
 
 
 def _ground_validation_commands(
@@ -1051,6 +1177,9 @@ def _read_only_context_paths(root: Path, candidate_paths: list[str]) -> list[str
 
 
 def _is_editable_candidate(path: str, task: str) -> bool:
+    if not _is_repo_source_path(path):
+        return False
+
     lower = path.lower()
     task_lower = task.lower()
     config_terms = {"dependency", "dependencies", "package", "script", "config", "typescript", "build"}
@@ -1101,6 +1230,83 @@ def _looks_like_test_path(path: str) -> bool:
         or lower.startswith("__tests__/")
         or lower.endswith((".test.ts", ".test.tsx", ".spec.ts", ".spec.tsx", "_test.py"))
     )
+
+
+def _extract_path_like_tokens(text: str) -> list[str]:
+    normalized = text.replace("\\", "/")
+    file_pat = re.compile(r"(?:src=)?([A-Za-z0-9_.@+\-()[\]]+(?:/[A-Za-z0-9_.@+\-()[\]]+)+\.[A-Za-z0-9]+)")
+    return _dedupe(_clean_path(match.group(1)) for match in file_pat.finditer(normalized))
+
+
+def _is_repo_source_path(value: str, ignored_patterns: set[str] | None = None) -> bool:
+    """True when a path is eligible source/test context for a Work Order.
+
+    Generated caches and vendored dependency installs are repo-real files, but
+    they are not repo-owned implementation scope. Accepting them lets broad
+    terms like "error" or "message" swamp the intended package files.
+    """
+    path = _clean_path(value)
+    if not path:
+        return False
+
+    parts = [part.lower() for part in path.split("/") if part and part != "."]
+    if not parts:
+        return False
+    for part in parts:
+        if part in IGNORED_REPO_PATH_PARTS:
+            return False
+    if _matches_ignored_pattern(path, ignored_patterns or IGNORED_REPO_PATH_GLOBS):
+        return False
+    return True
+
+
+def _ignored_repo_path_patterns(root: Path) -> set[str]:
+    patterns = set(IGNORED_REPO_PATH_GLOBS)
+    gitignore = root / ".gitignore"
+    try:
+        lines = gitignore.read_text(errors="ignore").splitlines()
+    except Exception:
+        return patterns
+
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#") or line.startswith("!"):
+            continue
+        line = line.replace("\\", "/")
+        while line.startswith("./"):
+            line = line[2:]
+        if line.startswith("/"):
+            line = line[1:]
+        patterns.add(line)
+    return patterns
+
+
+def _matches_ignored_pattern(path: str, patterns: set[str]) -> bool:
+    parts = [part.lower() for part in path.split("/") if part and part != "."]
+    lower_path = path.lower()
+    name = parts[-1] if parts else lower_path
+    for pattern in patterns:
+        pat = pattern.lower().strip()
+        if not pat:
+            continue
+        directory = pat.endswith("/")
+        pat = pat.rstrip("/")
+        if not pat:
+            continue
+        if directory:
+            if any(ch in pat for ch in "*?[]") and any(Path(part).match(pat) for part in parts):
+                return True
+            if pat in parts or lower_path.startswith(pat + "/"):
+                return True
+            continue
+        if "/" in pat:
+            if lower_path == pat or lower_path.startswith(pat + "/"):
+                return True
+        elif pat in parts:
+            return True
+        if any(ch in pat for ch in "*?[]") and Path(name).match(pat):
+            return True
+    return False
 
 
 def _path_exists(root: Path, value: str) -> bool:

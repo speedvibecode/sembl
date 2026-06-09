@@ -50,9 +50,9 @@ The CI guard above already makes an *inconsistent* release impossible. The next 
 to automate the *bump itself* so the number is never decided by hand:
 
 - **Conventional Commits** (`feat:`, `fix:`, `feat!:`) on every commit to `sembl`.
-- **release-please** (Google's bot): on merge to main it reads the commit types,
+- **release-please** (Google's bot): on merge to `master` it reads the commit types,
   computes the next version, opens a "release PR" that bumps `pyproject.toml` +
-  `sembl/__init__.py` + updates a `CHANGELOG.md`, and on merge tags `vX.Y.Z` — which
+  `sembl/__init__.py` + creates/updates `CHANGELOG.md`, and on merge tags `vX.Y.Z` — which
   fires the existing `release.yml` → PyPI. The site version can then be updated by a
   small release-triggered step (or kept manual per the rule above).
 

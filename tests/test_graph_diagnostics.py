@@ -74,6 +74,16 @@ class RepairCommandTests(unittest.TestCase):
 
 
 class DetectTests(unittest.TestCase):
+    def test_detect_reports_openrouter_provider_key(self):
+        with TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {"OPENROUTER_API_KEY": "set"},
+            clear=True,
+        ):
+            with patch("sembl.graph_diagnostics._resolve_cli", return_value=None):
+                d = detect(str(tmp))
+            self.assertTrue(d.provider_keys["openrouter"])
+
     def test_detects_graphify_graph_artifact(self):
         with TemporaryDirectory() as tmp, patch.dict(os.environ, {}, clear=True):
             root = Path(tmp)

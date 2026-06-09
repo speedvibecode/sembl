@@ -2,7 +2,13 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from sembl.generator import WorkOrder, _ground_work_order_in_repo, _parse_llm_response, _path_exists
+from sembl.generator import (
+    WorkOrder,
+    _extract_paths_from_text,
+    _ground_work_order_in_repo,
+    _parse_llm_response,
+    _path_exists,
+)
 from sembl.repo_probe import RepoProbe
 
 
@@ -187,6 +193,83 @@ class GeneratorGroundingTests(unittest.TestCase):
             self.assertNotIn("src/components/auth/LoginForm.tsx", wo.executor_prompt)
             self.assertIn("src/features/auth/api/completeOAuthSession.ts", wo.executor_prompt)
 
+    def test_graph_paths_with_route_syntax_are_extracted(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for path in [
+                "src/app/(main)/groups/[id]/index.tsx",
+                "src/app/(auth)/login+modal.tsx",
+                "packages/@scope/ui/button.ts",
+            ]:
+                file_path = root / path
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                file_path.write_text("export const marker = true;\n", encoding="utf-8")
+
+            paths = _extract_paths_from_text(
+                "NODE group [src=src/app/(main)/groups/[id]/index.tsx]\n"
+                "NODE login [src=src/app/(auth)/login+modal.tsx]\n"
+                "NODE button [src=packages/@scope/ui/button.ts]",
+                root,
+            )
+
+            self.assertIn("src/app/(main)/groups/[id]/index.tsx", paths)
+            self.assertIn("src/app/(auth)/login+modal.tsx", paths)
+            self.assertIn("packages/@scope/ui/button.ts", paths)
+
+    def test_graph_provenance_ranks_ahead_of_direct_keyword_hits(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for path, content in {
+                "src/gold/ownership.py": "def touch(): pass\n",
+                "src/noise/provider_error_message.py": (
+                    "provider api key error message " * 8
+                ),
+                "src/noise/another_error.py": "error message provider key\n",
+            }.items():
+                file_path = root / path
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                file_path.write_text(content, encoding="utf-8")
+
+            wo = WorkOrder(
+                original_request="improve the provider api key error message",
+                editable_paths=[],
+            )
+            probe = RepoProbe(
+                repo_path=str(root),
+                graphify_task_context="NODE ownership.py [src=src/gold/ownership.py]",
+            )
+
+            _ground_work_order_in_repo(wo, probe)
+
+            self.assertEqual(wo.editable_paths[0], "src/gold/ownership.py")
+
+    def test_graph_provenance_beats_full_llm_editable_list(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = {"src/gold/ownership.py": "def touch(): pass\n"}
+            for i in range(8):
+                paths[f"src/noise/provider_error_message_{i}.py"] = (
+                    "provider api key error message " * 8
+                )
+            for path, content in paths.items():
+                file_path = root / path
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                file_path.write_text(content, encoding="utf-8")
+
+            wo = WorkOrder(
+                original_request="improve the provider api key error message",
+                editable_paths=[f"src/noise/provider_error_message_{i}.py" for i in range(8)],
+            )
+            probe = RepoProbe(
+                repo_path=str(root),
+                graphify_task_context="NODE ownership.py [src=src/gold/ownership.py]",
+            )
+
+            _ground_work_order_in_repo(wo, probe)
+
+            self.assertEqual(wo.editable_paths[0], "src/gold/ownership.py")
+            self.assertIn("src/noise/provider_error_message_0.py", wo.editable_paths)
+
     def test_existing_task_related_test_is_preserved_for_validation(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -224,6 +307,92 @@ class GeneratorGroundingTests(unittest.TestCase):
             self.assertIn("npm test -- components/LoginForm.test.tsx", wo.validation_commands)
             self.assertFalse(any("No failing test file is present" in s for s in wo.stop_conditions))
             self.assertIn("components/LoginForm.test.tsx", wo.executor_prompt)
+
+    def test_generated_cache_paths_are_not_work_order_scope(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for path, content in {
+                ".gitignore": ".uv-cache/\nbenchmarks/\n",
+                "sembl/cli.py": (
+                    "def _check_api_key():\n"
+                    "    return 'No provider API key error message. Set OPENAI_API_KEY.'\n"
+                ),
+                "tests/test_cli.py": (
+                    "def test_missing_provider_api_key_message():\n"
+                    "    assert True\n"
+                ),
+                ".uv-cache/archive-v0/vendor/rich/errors.py": "class ConsoleError(Exception): pass\n",
+                ".uv-cache/archive-v0/vendor/rich/tests/test_errors.py": "def test_error(): pass\n",
+                "benchmarks/banter-benchmark/components/LoginForm.test.tsx": (
+                    "test('login redirect message', () => {});\n"
+                ),
+                "README.md": "Sembl CLI\n",
+            }.items():
+                file_path = root / path
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                file_path.write_text(content, encoding="utf-8")
+
+            wo = WorkOrder(
+                original_request="improve the error message shown when no provider API key is set",
+                likely_affected_areas=[".uv-cache/archive-v0/vendor/rich"],
+                editable_paths=[
+                    ".uv-cache/archive-v0/vendor/rich/errors.py",
+                    "benchmarks/banter-benchmark/components/LoginForm.test.tsx",
+                ],
+                read_only_context=[".uv-cache/archive-v0/vendor/rich/errors.py"],
+                files_to_inspect=[".uv-cache/archive-v0/vendor/rich/errors.py"],
+                tests_to_inspect=[
+                    ".uv-cache/archive-v0/vendor/rich/tests/test_errors.py",
+                    "benchmarks/banter-benchmark/components/LoginForm.test.tsx",
+                ],
+                patch_expectations=[
+                    "The output diff should contain a change to semb/exceptions.py.",
+                    "Keep the CLI behavior unchanged except for the message.",
+                ],
+                executor_prompt=(
+                    "Edit .uv-cache/archive-v0/vendor/rich/errors.py, "
+                    "benchmarks/banter-benchmark/components/LoginForm.test.tsx, "
+                    "semb/exceptions.py, and no other files"
+                ),
+            )
+            probe = RepoProbe(
+                repo_path=str(root),
+                graphify_task_context=(
+                    "NODE cached errors.py [src=.uv-cache/archive-v0/vendor/rich/errors.py]"
+                ),
+            )
+
+            _ground_work_order_in_repo(wo, probe)
+
+            for scoped_paths in [
+                wo.likely_affected_areas,
+                wo.editable_paths,
+                wo.read_only_context,
+                wo.files_to_inspect,
+                wo.tests_to_inspect,
+            ]:
+                self.assertFalse(
+                    any(path.startswith(".uv-cache/") for path in scoped_paths),
+                    scoped_paths,
+                )
+                self.assertFalse(
+                    any(path.startswith("benchmarks/") for path in scoped_paths),
+                    scoped_paths,
+                )
+            self.assertIn("sembl/cli.py", wo.editable_paths)
+            self.assertIn("tests/test_cli.py", wo.tests_to_inspect)
+            self.assertNotIn(".uv-cache", wo.executor_prompt)
+            self.assertNotIn("benchmarks/banter-benchmark", wo.executor_prompt)
+            self.assertNotIn("semb/exceptions.py", wo.executor_prompt)
+            self.assertNotIn(
+                "The output diff should contain a change to semb/exceptions.py.",
+                wo.patch_expectations,
+            )
+            self.assertIn(
+                "Keep the CLI behavior unchanged except for the message.",
+                wo.patch_expectations,
+            )
+            self.assertIn("sembl/cli.py", wo.executor_prompt)
 
 
 if __name__ == "__main__":
