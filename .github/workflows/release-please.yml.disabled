@@ -1,0 +1,28 @@
+# STAGED — not active. GitHub only runs *.yml / *.yaml, so this `.disabled` file does
+# nothing until you rename it to `release-please.yml`. See VERSIONING.md.
+#
+# What it does once enabled: on every push to master, release-please reads Conventional
+# Commit messages (feat:/fix:/feat!:), opens a "release PR" that bumps the version in
+# pyproject.toml + sembl/__init__.py and updates CHANGELOG.md. Merging that PR tags
+# vX.Y.Z and publishes a GitHub Release — which fires the existing release.yml →
+# PyPI Trusted Publishing. The release.yml version guard (tag == pyproject == __init__)
+# stays satisfied because release-please bumps them together.
+#
+# Before enabling: (1) ensure Settings → Actions → Workflow permissions allows
+# "Read and write" + "Allow GitHub Actions to create and approve pull requests";
+# (2) do one trial patch release to confirm the chain end-to-end.
+name: release-please
+on:
+  push:
+    branches: [master]
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

@@ -1,0 +1,11 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "python",
+  "packages": {
+    ".": {
+      "package-name": "sembl",
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": ["sembl/__init__.py"]
+    }
+  }
+}
