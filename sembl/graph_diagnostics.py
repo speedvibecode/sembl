@@ -59,6 +59,8 @@ class GraphDiagnostics:
 
     graphify_path: str = ""
     crg_path: str = ""
+    graphify_version: str = ""   # tool version (provenance); "" if unavailable
+    crg_version: str = ""
 
     graphify_out_dir: str = ""
     graphify_graph: str = "missing"   # "present" | "missing"
@@ -97,6 +99,32 @@ class GraphDiagnostics:
 
 # ── Detection ──────────────────────────────────────────────────────────────
 
+def _tool_version(cli_path: str) -> str:
+    """Best-effort tool version via `<cli> --version`. Empty string on any failure.
+
+    Tool-version knowledge lives here (the graph adapter boundary) so callers — the CLI
+    doctor, work-order provenance, and the benchmark — all read it from one place.
+    """
+    if not cli_path:
+        return ""
+    import subprocess
+    try:
+        r = subprocess.run([cli_path, "--version"], capture_output=True, text=True,
+                           timeout=10, encoding="utf-8", errors="replace")
+        out = (r.stdout or r.stderr or "").strip().splitlines()
+        return out[0].strip()[:80] if out else ""
+    except Exception:
+        return ""
+
+
+def detect_tool_versions(repo_path: str = ".") -> dict:
+    """{tool: version_or_empty} for the graph tools, for provenance capture."""
+    return {
+        "graphify": _tool_version(_resolve_cli("graphify") or ""),
+        "code-review-graph": _tool_version(_resolve_cli("code-review-graph") or ""),
+    }
+
+
 def detect(repo_path: str) -> GraphDiagnostics:
     """Inspect the repo and graph subsystem. No LLM calls, no mutations."""
     root = Path(repo_path).resolve()
@@ -111,6 +139,8 @@ def detect(repo_path: str) -> GraphDiagnostics:
 
     d.graphify_path = _resolve_cli("graphify") or ""
     d.crg_path = _resolve_cli("code-review-graph") or ""
+    d.graphify_version = _tool_version(d.graphify_path) if d.graphify_path else ""
+    d.crg_version = _tool_version(d.crg_path) if d.crg_path else ""
 
     # Graphify graph artifact: graphify-out/graph.json (or $GRAPHIFY_OUT).
     out_dir = Path(os.environ.get("GRAPHIFY_OUT") or (root / "graphify-out"))
