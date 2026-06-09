@@ -41,7 +41,7 @@ console = Console()
 
 
 @click.group()
-@click.version_option("0.1.4", prog_name="sembl")
+@click.version_option("0.1.5", prog_name="sembl")
 def main():
     """Sembl — turn messy repo intent into scoped AI Work Orders."""
     pass
@@ -55,7 +55,7 @@ def main():
 @click.option("--task",     "-t", required=True,
               help="The task or request to turn into a Work Order.")
 @click.option("--provider", "-p", default="openai",
-              type=click.Choice(["openai", "anthropic", "gemini", "nvidia", "openrouter"], case_sensitive=False),
+              type=click.Choice(["openai", "anthropic", "gemini", "nvidia", "openrouter", "ollama"], case_sensitive=False),
               show_default=True, help="LLM provider.")
 @click.option("--model",    "-m", default=None,
               help="Model name. Defaults to gpt-4o (openai), claude-sonnet-4-6 (anthropic), gemini-2.5-flash (gemini), or mistralai/mistral-medium-3.5-128b (nvidia).")
@@ -438,6 +438,9 @@ def _find_wo_dir(repo_path: Path, wo_id: str | None) -> Path | None:
 
 
 def _check_api_key(provider: str, api_key: str | None):
+    # Local providers need no API key.
+    if provider.lower() == "ollama":
+        return
     env_keys = {
         "openai": "OPENAI_API_KEY",
         "anthropic": "ANTHROPIC_API_KEY",

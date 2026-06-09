@@ -85,7 +85,7 @@ Sembl is early but usable for testing. The current CLI supports:
 - optional code-review-graph context
 - graph diagnostics via `sembl doctor`, and `--graph-mode auto|required|off`
 - LLM graph-impact synthesis over code-review-graph output (`--no-graph-enrichment` to skip)
-- OpenAI, Anthropic, Gemini, NVIDIA NIM, and OpenRouter providers
+- OpenAI, Anthropic, Gemini, NVIDIA NIM, OpenRouter, and local Ollama providers
 - work-order output as Markdown, JSON, executor prompt, validation plan, and graph-impact analysis
 
 ## Install
@@ -142,15 +142,20 @@ $env:ANTHROPIC_API_KEY="..."
 $env:GEMINI_API_KEY="..."
 $env:NVIDIA_API_KEY="..."
 $env:OPENROUTER_API_KEY="..."
+# Ollama needs no key (local); set OLLAMA_HOST only to point at a non-default server.
 ```
 
-Then choose the provider (`openai`, `anthropic`, `gemini`, `nvidia`, or `openrouter`):
+Then choose the provider (`openai`, `anthropic`, `gemini`, `nvidia`, `openrouter`, or `ollama`):
 
 ```powershell
 sembl generate --repo C:\path\to\repo --task "replace starter screen text" --provider nvidia
 
 # OpenRouter (OpenAI-compatible) routes to any model in its catalog:
 sembl generate --repo C:\path\to\repo --task "replace starter screen text" --provider openrouter --model moonshotai/kimi-k2
+
+# Ollama runs locally — no key, no rate limits, offline (slower on CPU-only machines):
+#   ollama pull qwen2.5-coder:7b
+sembl generate --repo C:\path\to\repo --task "replace starter screen text" --provider ollama --model qwen2.5-coder:7b
 ```
 
 ## Optional Graph Context

@@ -414,6 +414,8 @@ def _call_llm(
         return _call_nvidia(system_prompt, user_prompt, model, api_key)
     if provider == "openrouter":
         return _call_openrouter(system_prompt, user_prompt, model, api_key)
+    if provider == "ollama":
+        return _call_ollama(system_prompt, user_prompt, model, api_key)
     if provider == "openai":
         return _call_openai(system_prompt, user_prompt, model, api_key)
     raise ValueError(f"Unsupported provider: {provider}")
@@ -589,6 +591,46 @@ def _call_openrouter(system_prompt, user_prompt, model, api_key) -> str:
         raise ProviderAPIError(
             str(e),
             provider="openrouter",
+            status_code=getattr(e, "status_code", None),
+            code=getattr(e, "code", None),
+        ) from None
+
+    return response.choices[0].message.content or ""
+
+
+def _call_ollama(system_prompt, user_prompt, model, api_key) -> str:
+    """Local models via Ollama's OpenAI-compatible endpoint. No API key needed; runs
+    on the user's machine ($0, no rate limits). Base URL defaults to localhost and can
+    be overridden with OLLAMA_HOST (e.g. http://host:port). A generous timeout is set
+    because CPU inference can take minutes per generation.
+    """
+    from openai import OpenAI
+
+    host = os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
+    if not host.endswith("/v1"):
+        host = host + "/v1"
+    client = OpenAI(
+        api_key=api_key or "ollama",  # Ollama ignores the key but the client requires one.
+        base_url=host,
+        timeout=900,
+    )
+    m = model or "qwen2.5-coder:7b"
+
+    try:
+        response = client.chat.completions.create(
+            model=m,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.2,
+            max_tokens=8192,
+            stream=False,
+        )
+    except Exception as e:
+        raise ProviderAPIError(
+            str(e),
+            provider="ollama",
             status_code=getattr(e, "status_code", None),
             code=getattr(e, "code", None),
         ) from None
