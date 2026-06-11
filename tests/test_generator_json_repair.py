@@ -216,7 +216,13 @@ class GeneratorGroundingTests(unittest.TestCase):
             self.assertIn("src/app/(auth)/login+modal.tsx", paths)
             self.assertIn("packages/@scope/ui/button.ts", paths)
 
-    def test_graph_provenance_ranks_ahead_of_direct_keyword_hits(self):
+    def test_graph_surfaced_file_survives_keyword_hits(self):
+        # 0.1.9 policy change: relevance ranks first and graph provenance breaks
+        # ties (the 0.1.8 provenance-first rule let graphify-named entry points
+        # crowd out the true fix file on 4/4 demo repos — see
+        # demo-tasks/CROSS-REPO-FINDINGS.md). A zero-keyword graph file must
+        # still SURVIVE into editable_paths, but no longer auto-wins rank 1
+        # against keyword+content matches.
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             for path, content in {
@@ -241,9 +247,9 @@ class GeneratorGroundingTests(unittest.TestCase):
 
             _ground_work_order_in_repo(wo, probe)
 
-            self.assertEqual(wo.editable_paths[0], "src/gold/ownership.py")
+            self.assertIn("src/gold/ownership.py", wo.editable_paths)
 
-    def test_graph_provenance_beats_full_llm_editable_list(self):
+    def test_graph_surfaced_file_survives_full_llm_editable_list(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             paths = {"src/gold/ownership.py": "def touch(): pass\n"}
@@ -267,8 +273,38 @@ class GeneratorGroundingTests(unittest.TestCase):
 
             _ground_work_order_in_repo(wo, probe)
 
-            self.assertEqual(wo.editable_paths[0], "src/gold/ownership.py")
+            self.assertIn("src/gold/ownership.py", wo.editable_paths)
             self.assertIn("src/noise/provider_error_message_0.py", wo.editable_paths)
+
+    def test_failure_trace_match_outranks_keyword_stuffed_noise(self):
+        # The 0.1.9 replacement for provenance-first: when the task quotes an
+        # error string, the file CONTAINING that string wins rank 1 even
+        # against keyword-stuffed path names.
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for path, content in {
+                "src/gold/ownership.py": (
+                    'MESSAGE = "invalid provider api key supplied"\n'
+                ),
+                "src/noise/provider_error_message.py": (
+                    "provider api key error message " * 8
+                ),
+            }.items():
+                file_path = root / path
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                file_path.write_text(content, encoding="utf-8")
+
+            wo = WorkOrder(
+                original_request=(
+                    'fix the provider error that says "invalid provider api key supplied"'
+                ),
+                editable_paths=[],
+            )
+            probe = RepoProbe(repo_path=str(root))
+
+            _ground_work_order_in_repo(wo, probe)
+
+            self.assertEqual(wo.editable_paths[0], "src/gold/ownership.py")
 
     def test_existing_task_related_test_is_preserved_for_validation(self):
         with TemporaryDirectory() as tmp:

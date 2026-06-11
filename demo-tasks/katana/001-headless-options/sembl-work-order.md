@@ -1,7 +1,7 @@
-# Work Order - wo-katana-1781181138-katana-s-headless-options-ho-flag-is-ign
+# Work Order - wo-katana-1781186477-katana-s-headless-options-ho-flag-is-ign
 
 **Repo:** `katana` | **Branch:** `pinned-base` | **Risk:** `MEDIUM`
-**Created:** 2026-06-11T12:32:18.735625+00:00
+**Created:** 2026-06-11T14:01:17.293774+00:00
 **Task type:** `bugfix`
 
 ---
@@ -11,31 +11,30 @@
 **Original request:**
 > katana's -headless-options / -ho flag is ignored since v1.4.0 - e.g. running katana -headless -ho '--proxy-server=http://127.0.0.1:18080' and chrome never uses the proxy, traffic bypasses it completely. this worked fine in 1.3.x, looks like a regression from the headless rewrite. please fix so headless chrome actually gets the user's custom flags again.
 
-**Clarified goal:** Fix the regression in katana v1.4.0+ where the -headless-options / -ho flag is ignored, causing custom Chrome flags (e.g., proxy-server) to not be applied during headless execution
+**Clarified goal:** Fix regression in katana where -headless-options / -ho flags are ignored by headless Chrome since v1.4.0, ensuring user-provided flags (e.g., --proxy-server) are propagated to the Chrome instance
 
-**User-visible outcome:** Running `katana -headless -ho '--proxy-server=http://127.0.0.1:18080'` will now correctly route traffic through the specified proxy server, as it did in v1.3.x
+**User-visible outcome:** Running `katana -headless -ho '--proxy-server=http://127.0.0.1:18080'` will now correctly route traffic through the specified proxy
 
 ## 2. Boundary Lock
 
 **Non-goals:**
 
-- Add new headless flags or options
+- Add new CLI flags
 - Modify non-headless engine behavior
-- Change the CLI argument parsing for other flags
-- Update documentation or tests for unrelated features
+- Change default Chrome flags
+- Alter test logic in headless_test.go
 
 **Must not change:**
 
-- Existing headless functionality unrelated to custom flag passing
-- CLI argument parsing for other flags
-- Behavior of non-headless crawling modes
-- Test files (only implementation files may be modified)
+- Existing headless Chrome functionality for non-custom flags
+- CLI flag parsing logic outside headless engine
+- Behavior of other engine types (e.g., non-headless)
 
 **Forbidden areas (agent must not touch):**
 
-- cmd/functional-test/
-- cmd/tools/crawl-maze-score/
-- cmd/integration-test/
+- cmd/tools/crawl-maze-score
+- cmd/functional-test
+- cmd/integration-test
 - pkg/engine/headless/headless_test.go
 
 ## 3. Scope Lock
@@ -43,7 +42,6 @@
 **Likely affected areas:**
 
 - pkg/engine/headless
-- pkg/engine/headless/
 - pkg/engine/headless/js
 - pkg/engine/headless/graph
 - pkg/engine/headless/types
@@ -52,79 +50,95 @@
 - pkg/engine/headless/crawler
 - pkg/engine/headless/captcha/js
 - pkg/engine/headless/browser/cookie
+- pkg/engine/headless/browser/stealth
 
 **Editable paths (agent MAY modify):**
 
 - pkg/engine/headless/headless.go
+- pkg/types/options.go
+- internal/runner/options.go
+- pkg/types/crawler_options.go
+- pkg/engine/headless/browser/browser.go
+- pkg/engine/headless/crawler/crawler.go
+- pkg/engine/headless/browser/stealth/assets.go
+- pkg/engine/headless/browser/element.go
 - pkg/engine/headless/headless_test.go
-- pkg/engine/headless/debugger.go
-- pkg/utils/queue/stack.go
-- cmd/functional-test/main.go
-- cmd/tools/crawl-maze-score/main.go
-- cmd/integration-test/integration-test.go
-- pkg/engine/headless/js/utils.js
 
 **Read-only context (inspect, do not modify):**
 
 - pkg/engine/headless/headless_test.go
 - README.md
+- pkg/types/options.go
+- pkg/types/options_test.go
+- pkg/types/crawler_options.go
 - pkg/engine/headless/types
+- pkg/engine/headless/types/types.go
+- pkg/types/default.go
 
 ## 4. Context Lock
 
 **Files to inspect before starting:**
 
+- pkg/types/options.go
+- pkg/output/options.go
+- pkg/engine/common/http.go
+- pkg/types/options_test.go
+- internal/runner/options.go
+- pkg/output/custom_field.go
+- pkg/types/crawler_options.go
+- internal/runner/options_test.go
 - pkg/engine/headless/headless.go
+- internal/testutils/testserver.go
 - pkg/engine/headless/headless_test.go
-- pkg/engine/headless/debugger.go
-- pkg/engine/headless/js/utils.js
-- pkg/engine/headless/js/page-init.js
-- pkg/engine/headless/captcha/js/identify.js
-- pkg/engine/headless/captcha/js/inject-hcaptcha.js
-- pkg/engine/headless/captcha/js/inject-recaptcha.js
-- pkg/engine/headless/captcha/js/inject-turnstile.js
-- pkg/utils/queue/stack.go
-- cmd/functional-test/main.go
-- cmd/tools/crawl-maze-score/main.go
+- pkg/engine/headless/js/js.go
 
 **Tests to inspect:**
 
 - pkg/engine/headless/headless_test.go
+- pkg/types/options_test.go
+- internal/runner/options_test.go
+- internal/testutils/testserver.go
+- pkg/engine/headless/crawler/state_test.go
+- pkg/engine/headless/captcha/inject_test.go
+- pkg/engine/headless/captcha/solver_test.go
+- pkg/engine/headless/browser/browser_test.go
 
 **Architecture notes:**
 
-- Headless Chrome launch logic is centralized in pkg/engine/headless/
-- Custom flags must be passed through to the Chrome/Chromium binary at launch
-- The regression was introduced during the headless rewrite in v1.4.0
+- Headless engine is decoupled from CLI parsing; flags must be explicitly passed through
+- Regression introduced in v1.4.0 during headless rewrite suggests missing flag propagation in debugger or headless setup
+- Graph shows no direct edges between CLI and headless flag handling, implying indirect coupling
 
 ## 5. Success Lock
 
 **Acceptance criteria:**
 
-1. Custom flags passed via -ho are applied to the headless Chrome instance
+1. User-provided -ho flags are appended to Chrome's launch arguments
 2. Proxy server flag (--proxy-server) works as expected when passed via -ho
-3. No regression in existing headless functionality
-4. Behavior matches v1.3.x for -ho flag handling
+3. No existing headless functionality is broken (e.g., default flags still work)
+4. All existing headless tests pass
 
 **Regressions to preserve:**
 
-- All existing headless crawling behavior not related to custom flags
-- CLI argument parsing for other flags remains unchanged
-- Non-headless modes continue to work as before
+- Default headless Chrome behavior without -ho flags
+- Other headless options (e.g., --no-sandbox) continue to work
+- Non-headless engine modes remain unaffected
 
 ## 6. Proof Lock
 
 **Validation commands:**
 
-- `katana -headless -ho '--proxy-server=http://127.0.0.1:18080' -u http://example.com -d 1 -jc -kf 2>&1 | grep -i 'proxy' || echo 'Proxy flag not detected in output'`
 - `go test ./pkg/engine/headless/... -v`
+- `katana -headless -ho '--proxy-server=http://127.0.0.1:18080' -u http://example.com -d 1 -jc 1 2>&1 | grep -i 'proxy' || echo 'Proxy flag not visible in output (may still be applied)'`
 
-**Tests to add or update:** _none identified_
+**Tests to add or update:**
+
+- pkg/engine/headless/headless_test.go (add test case for -ho flag propagation)
 
 **Manual checks:**
 
-1. Verify with a real proxy server (e.g., mitmproxy) that traffic is routed through it when -ho '--proxy-server=...' is used
-2. Test multiple custom flags via -ho to ensure all are applied
+1. Verify with a real proxy (e.g., mitmproxy) that traffic is routed through the proxy when -ho '--proxy-server=...' is used
+2. Test multiple -ho flags (e.g., --proxy-server and --user-agent) to ensure all are propagated
 
 ## 7. Safety Lock
 
@@ -133,21 +147,22 @@
 **Risk reasons:**
 
 - Regression in a core feature (headless flag handling)
-- Affects user-facing behavior (proxy settings ignored)
-- Requires changes to critical path (Chrome launch logic)
+- Hidden coupling between headless rewrite and flag propagation (per graph analysis)
+- Potential to break existing headless functionality if flag passing is mishandled
 
 **Stop conditions (agent must halt and ask human):**
 
-- If the fix requires changes outside pkg/engine/headless/
-- If the solution involves modifying test files
-- If the change affects non-headless execution paths
-- If the fix cannot be validated with the existing test suite and manual checks
-- No failing test file is present in the repo; ask the human for the exact failing test path before changing implementation.
+- If the fix requires modifying CLI flag parsing logic outside pkg/engine/headless
+- If the change affects non-headless engine behavior
+- If existing headless tests fail after the fix
+- If the debugger or headless setup cannot be modified without breaking other functionality
+- If the correct fix requires editing a file outside editable_paths, stop and report which file and why instead of proceeding or expanding scope.
 
 **Approval triggers (blocks merge):**
 
-- Any change to the public API of the headless package
-- Modifications to flag parsing logic outside the headless package
+- Changes to files outside pkg/engine/headless
+- Modifications to default Chrome flags or behavior
+- Any risk of breaking backward compatibility with existing -ho usage
 
 ## 8. Executor Packet
 
@@ -155,12 +170,11 @@ _See `executor-prompt.md` for the agent-ready prompt._
 
 **Patch expectations:**
 
-- Changes limited to pkg/engine/headless/headless.go and/or pkg/engine/headless/debugger.go
-- Modifications to how custom flags are passed to the Chrome binary
-- No changes to test files or unrelated packages
-- Minimal diff focusing solely on the flag-passing regression
+- Minimal changes to headless.go or debugger.go to propagate -ho flags to Chrome
+- No changes to test files in the initial fix (tests may be added separately)
+- No modifications to CLI parsing or other engine types
 
-**Reporting format:** A JSON object with: { "changes": [{"file": "path", "diff": "unified diff"}], "validation": {"manual": ["description of manual tests performed"], "automated": ["output of validation commands"]}, "risks": ["any potential risks not covered by tests"] }
+**Reporting format:** Structured summary with: 1) Root cause (1 sentence), 2) Files modified, 3) Changes made (bullet points), 4) Validation results (tests + manual checks), 5) Confirmation of acceptance criteria
 
 ---
 

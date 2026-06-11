@@ -1,11 +1,11 @@
-# Executor Prompt - wo-katana-1781181138-katana-s-headless-options-ho-flag-is-ign
+# Executor Prompt - wo-katana-1781186477-katana-s-headless-options-ho-flag-is-ign
 
 _Paste this directly into Claude Code, Aider, Cursor, or any other AI coding agent._
 _Do not modify the scope, forbidden areas, or stop conditions._
 
 ---
 
-Your task is to Fix the regression in katana v1.4.0+ where the -headless-options / -ho flag is ignored, causing custom Chrome flags (e.g., proxy-server) to not be applied during headless execution. Original request: katana's -headless-options / -ho flag is ignored since v1.4.0 - e.g. running katana -headless -ho '--proxy-server=http://127.0.0.1:18080' and chrome never uses the proxy, traffic bypasses it completely. this worked fine in 1.3.x, looks like a regression from the headless rewrite. please fix so headless chrome actually gets the user's custom flags again.. User-visible outcome: Running `katana -headless -ho '--proxy-server=http://127.0.0.1:18080'` will now correctly route traffic through the specified proxy server, as it did in v1.3.x. Non-goals: Add new headless flags or options; Modify non-headless engine behavior; Change the CLI argument parsing for other flags; Update documentation or tests for unrelated features. You MAY only edit these paths: pkg/engine/headless/headless.go; pkg/engine/headless/headless_test.go; pkg/engine/headless/debugger.go; pkg/utils/queue/stack.go; cmd/functional-test/main.go; cmd/tools/crawl-maze-score/main.go; cmd/integration-test/integration-test.go; pkg/engine/headless/js/utils.js. You must NOT touch: cmd/functional-test/; cmd/tools/crawl-maze-score/; cmd/integration-test/; pkg/engine/headless/headless_test.go. Inspect these files before changing code: pkg/engine/headless/headless.go; pkg/engine/headless/headless_test.go; pkg/engine/headless/debugger.go; pkg/engine/headless/js/utils.js; pkg/engine/headless/js/page-init.js; pkg/engine/headless/captcha/js/identify.js; pkg/engine/headless/captcha/js/inject-hcaptcha.js; pkg/engine/headless/captcha/js/inject-recaptcha.js; pkg/engine/headless/captcha/js/inject-turnstile.js; pkg/utils/queue/stack.go; cmd/functional-test/main.go; cmd/tools/crawl-maze-score/main.go. Inspect these tests before changing code: pkg/engine/headless/headless_test.go. Acceptance criteria: Custom flags passed via -ho are applied to the headless Chrome instance; Proxy server flag (--proxy-server) works as expected when passed via -ho; No regression in existing headless functionality; Behavior matches v1.3.x for -ho flag handling. Stop and ask the human if: If the fix requires changes outside pkg/engine/headless/; If the solution involves modifying test files; If the change affects non-headless execution paths; If the fix cannot be validated with the existing test suite and manual checks; No failing test file is present in the repo; ask the human for the exact failing test path before changing implementation.. Patch expectations: Changes limited to pkg/engine/headless/headless.go and/or pkg/engine/headless/debugger.go; Modifications to how custom flags are passed to the Chrome binary; No changes to test files or unrelated packages; Minimal diff focusing solely on the flag-passing regression. Validate with: katana -headless -ho '--proxy-server=http://127.0.0.1:18080' -u http://example.com -d 1 -jc -kf 2>&1 | grep -i 'proxy' || echo 'Proxy flag not detected in output'; go test ./pkg/engine/headless/... -v. Report your work using this format: A JSON object with: { "changes": [{"file": "path", "diff": "unified diff"}], "validation": {"manual": ["description of manual tests performed"], "automated": ["output of validation commands"]}, "risks": ["any potential risks not covered by tests"] }
+Your task is to Fix regression in katana where -headless-options / -ho flags are ignored by headless Chrome since v1.4.0, ensuring user-provided flags (e.g., --proxy-server) are propagated to the Chrome instance. Original request: katana's -headless-options / -ho flag is ignored since v1.4.0 - e.g. running katana -headless -ho '--proxy-server=http://127.0.0.1:18080' and chrome never uses the proxy, traffic bypasses it completely. this worked fine in 1.3.x, looks like a regression from the headless rewrite. please fix so headless chrome actually gets the user's custom flags again.. User-visible outcome: Running `katana -headless -ho '--proxy-server=http://127.0.0.1:18080'` will now correctly route traffic through the specified proxy. Non-goals: Add new CLI flags; Modify non-headless engine behavior; Change default Chrome flags; Alter test logic in headless_test.go. You MAY only edit these paths: pkg/engine/headless/headless.go; pkg/types/options.go; internal/runner/options.go; pkg/types/crawler_options.go; pkg/engine/headless/browser/browser.go; pkg/engine/headless/crawler/crawler.go; pkg/engine/headless/browser/stealth/assets.go; pkg/engine/headless/browser/element.go; pkg/engine/headless/headless_test.go. You must NOT touch: cmd/tools/crawl-maze-score; cmd/functional-test; cmd/integration-test; pkg/engine/headless/headless_test.go. Inspect these files before changing code: pkg/types/options.go; pkg/output/options.go; pkg/engine/common/http.go; pkg/types/options_test.go; internal/runner/options.go; pkg/output/custom_field.go; pkg/types/crawler_options.go; internal/runner/options_test.go; pkg/engine/headless/headless.go; internal/testutils/testserver.go; pkg/engine/headless/headless_test.go; pkg/engine/headless/js/js.go. Inspect these tests before changing code: pkg/engine/headless/headless_test.go; pkg/types/options_test.go; internal/runner/options_test.go; internal/testutils/testserver.go; pkg/engine/headless/crawler/state_test.go; pkg/engine/headless/captcha/inject_test.go; pkg/engine/headless/captcha/solver_test.go; pkg/engine/headless/browser/browser_test.go. Acceptance criteria: User-provided -ho flags are appended to Chrome's launch arguments; Proxy server flag (--proxy-server) works as expected when passed via -ho; No existing headless functionality is broken (e.g., default flags still work); All existing headless tests pass. Stop and ask the human if: If the fix requires modifying CLI flag parsing logic outside pkg/engine/headless; If the change affects non-headless engine behavior; If existing headless tests fail after the fix; If the debugger or headless setup cannot be modified without breaking other functionality; If the correct fix requires editing a file outside editable_paths, stop and report which file and why instead of proceeding or expanding scope.. Patch expectations: Minimal changes to headless.go or debugger.go to propagate -ho flags to Chrome; No changes to test files in the initial fix (tests may be added separately); No modifications to CLI parsing or other engine types. Validate with: go test ./pkg/engine/headless/... -v; katana -headless -ho '--proxy-server=http://127.0.0.1:18080' -u http://example.com -d 1 -jc 1 2>&1 | grep -i 'proxy' || echo 'Proxy flag not visible in output (may still be applied)'. Report your work using this format: Structured summary with: 1) Root cause (1 sentence), 2) Files modified, 3) Changes made (bullet points), 4) Validation results (tests + manual checks), 5) Confirmation of acceptance criteria
 
 ---
 
@@ -13,33 +13,33 @@ Your task is to Fix the regression in katana v1.4.0+ where the -headless-options
 
 **You MAY only edit these paths:**
 - `pkg/engine/headless/headless.go`
+- `pkg/types/options.go`
+- `internal/runner/options.go`
+- `pkg/types/crawler_options.go`
+- `pkg/engine/headless/browser/browser.go`
+- `pkg/engine/headless/crawler/crawler.go`
+- `pkg/engine/headless/browser/stealth/assets.go`
+- `pkg/engine/headless/browser/element.go`
 - `pkg/engine/headless/headless_test.go`
-- `pkg/engine/headless/debugger.go`
-- `pkg/utils/queue/stack.go`
-- `cmd/functional-test/main.go`
-- `cmd/tools/crawl-maze-score/main.go`
-- `cmd/integration-test/integration-test.go`
-- `pkg/engine/headless/js/utils.js`
 
 **You must NOT touch:**
-- `cmd/functional-test/`
-- `cmd/tools/crawl-maze-score/`
-- `cmd/integration-test/`
+- `cmd/tools/crawl-maze-score`
+- `cmd/functional-test`
+- `cmd/integration-test`
 - `pkg/engine/headless/headless_test.go`
 
 ## Stop conditions
 
 Stop immediately and ask the human if any of these occur:
 
-- If the fix requires changes outside pkg/engine/headless/
-- If the solution involves modifying test files
-- If the change affects non-headless execution paths
-- If the fix cannot be validated with the existing test suite and manual checks
-- No failing test file is present in the repo; ask the human for the exact failing test path before changing implementation.
+- If the fix requires modifying CLI flag parsing logic outside pkg/engine/headless
+- If the change affects non-headless engine behavior
+- If existing headless tests fail after the fix
+- If the debugger or headless setup cannot be modified without breaking other functionality
+- If the correct fix requires editing a file outside editable_paths, stop and report which file and why instead of proceeding or expanding scope.
 
 ## Patch expectations
 
-- Changes limited to pkg/engine/headless/headless.go and/or pkg/engine/headless/debugger.go
-- Modifications to how custom flags are passed to the Chrome binary
-- No changes to test files or unrelated packages
-- Minimal diff focusing solely on the flag-passing regression
+- Minimal changes to headless.go or debugger.go to propagate -ho flags to Chrome
+- No changes to test files in the initial fix (tests may be added separately)
+- No modifications to CLI parsing or other engine types

@@ -1,13 +1,13 @@
-# Graph Impact Analysis - wo-chatbotui-1781182543-claude-3-responses-get-cut-off-after-a-f
+# Graph Impact Analysis - wo-chatbotui-1781196195-claude-3-responses-in-the-app-get-cut-of
 
 _LLM synthesis over code-review-graph structural output. Grounds the Work Order's scope, read-only context, and risk._
 
 ---
 
-**Blast radius**: Likely confined to API route handling for Claude 3 responses, given the `GET()` node in `app/api/assistants/openai/route.ts`.
+**Blast radius**: Claude-specific streaming logic, likely in chat handler or API client modules.
 
-**Likely edit targets**: `app/api/assistants/openai/route.ts` (primary), possibly `package.json` if dependency adjustments are needed.
+**Likely edit targets**: `use-chat-handler.tsx`, `browser-client.ts` (Claude API integration), `chat-ui.tsx` (streaming UI).
 
-**Hidden coupling / risk**: No direct edges or flow impacts detected. Risk score is 0.00, but cross-module links (e.g., shared utils like `lib/utils.ts` or context) are not ruled out by the provided data.
+**Hidden coupling / risk**: Shared `ChatbotUIContext` (state for models/settings) may affect streaming. `message.tsx` renders responses-could mask truncation.
 
-**Keep read-only**: `package.json` (unless dependency changes are confirmed), `supabase/types.ts`, `context/context.tsx`, and other community nodes (no evidence of required edits).
+**Keep read-only**: `package.json`, `.eslintrc.json`, `types/`, `supabase/types.ts` (no structural impact shown).

@@ -1,7 +1,7 @@
-# Work Order - wo-fastapitempl-1781181564-in-the-dashboard-resetting-a-password-is
+# Work Order - wo-fastapitempl-1781196074-in-the-dashboard-resetting-a-password-is
 
 **Repo:** `fastapi-template` | **Branch:** `pinned-base` | **Risk:** `MEDIUM`
-**Created:** 2026-06-11T12:39:24.525578+00:00
+**Created:** 2026-06-11T16:41:14.905002+00:00
 **Task type:** `bugfix`
 
 ---
@@ -11,7 +11,7 @@
 **Original request:**
 > in the dashboard, resetting a password is broken - i open the reset password page, type the same password in both fields and it always errors with 'The passwords do not match' even though they are literally identical. so nobody can ever complete a password reset. signup/login still work fine. please fix the reset password flow.
 
-**Clarified goal:** Fix the password reset form validation to correctly compare the two password fields and allow submission when they match
+**Clarified goal:** Fix the frontend password reset form validation logic to correctly compare the two password fields and allow submission when they match
 
 **User-visible outcome:** Users can successfully reset their password by entering the same password in both fields without receiving a false 'passwords do not match' error
 
@@ -20,23 +20,23 @@
 **Non-goals:**
 
 - Modify signup or login flows
-- Change password hashing or backend validation
+- Change backend password reset API logic
+- Update password hashing or security policies
 - Alter UI styling or layout of the reset page
-- Add new features to the reset flow
 
 **Must not change:**
 
 - Existing signup/login functionality
-- Password hashing or security logic
-- Backend API contracts for auth
-- Chakra UI component behavior outside this form
+- Backend API contracts for password reset
+- Password validation rules (length, complexity, etc.)
+- Error messages for other validation cases
 
 **Forbidden areas (agent must not touch):**
 
-- backend/app
-- frontend/package.json
+- frontend/src/api/
+- frontend/src/lib/auth.ts
 - frontend/biome.json
-- frontend/src/routes/_layout/auth
+- frontend/package.json
 
 ## 3. Scope Lock
 
@@ -55,19 +55,18 @@
 
 **Editable paths (agent MAY modify):**
 
-- frontend/biome.json
-- backend/app/initial_data.py
-- backend/app/backend_pre_start.py
-- frontend/src/routes/_layout/index.tsx
+- frontend/src/components/Admin/AddUser.tsx
+- frontend/src/components/Admin/EditUser.tsx
 - frontend/src/routes/reset-password.tsx
-- frontend/src/hooks/useAuth.ts
+- frontend/src/utils.ts
 - frontend/src/routes/login.tsx
 - backend/app/api/routes/login.py
+- frontend/src/client/core/OpenAPI.ts
+- backend/app/initial_data.py
+- backend/app/tests_pre_start.py
 
 **Read-only context (inspect, do not modify):**
 
-- frontend/package.json
-- frontend/biome.json
 - backend/app/core/security.py
 - README.md
 - frontend/src/client/core/types.ts
@@ -103,41 +102,43 @@
 **Architecture notes:**
 
 - Frontend uses React + TypeScript + Chakra UI
-- Password reset is likely a client-side form with validation before API submission
-- Backend auth endpoints are in backend/app/api/api_v1/endpoints/auth.py
-- Shared validation logic may exist in frontend/src/utils
+- Password reset is likely a frontend-only validation issue
+- Backend API for password reset should remain untouched
+- Form validation may use React Hook Form or custom hooks
 
 ## 5. Success Lock
 
 **Acceptance criteria:**
 
-1. Password reset form accepts matching passwords in both fields without error
-2. Password reset form still rejects non-matching passwords with 'passwords do not match' error
-3. Form submits successfully to backend when passwords match and meet other requirements
-4. No console errors during password reset flow
-5. Existing signup/login flows remain unaffected
+1. Password reset form accepts submission when both password fields contain identical values
+2. Password reset form still rejects submission when password fields differ
+3. All other validation rules (length, complexity) remain enforced
+4. No console errors or unhandled exceptions during form interaction
+5. Existing tests for password reset (if any) continue to pass
 
 **Regressions to preserve:**
 
 - Signup flow continues to work
 - Login flow continues to work
-- Password hashing remains unchanged
-- Backend auth endpoints remain unchanged
+- Password reset API endpoint remains unchanged
+- Other form validations (e.g., required fields) still work
 
 ## 6. Proof Lock
 
-**Validation commands:** _none identified_
+**Validation commands:**
+
+- `curl -s http://localhost:8000/docs | grep -i 'reset.*password' | head -5`
 
 **Tests to add or update:**
 
-- frontend/src/tests/PasswordResetForm.test.tsx (add test for matching passwords)
-- frontend/src/tests/validation.test.ts (add test for password comparison logic)
+- frontend/src/components/__tests__/ResetPasswordForm.test.tsx
+- frontend/src/hooks/__tests__/useResetPassword.test.ts
 
 **Manual checks:**
 
-1. Manually test password reset flow in browser with matching passwords
-2. Verify non-matching passwords still show error
-3. Check browser console for errors during reset flow
+1. Open password reset page in browser, enter matching passwords, verify submission succeeds
+2. Enter non-matching passwords, verify error message appears
+3. Test edge cases: empty fields, whitespace-only passwords, very long passwords
 
 ## 7. Safety Lock
 
@@ -145,23 +146,23 @@
 
 **Risk reasons:**
 
-- Affects user-facing auth flow (critical path)
-- Potential for breaking other forms if shared validation is modified
-- Unknown location of password comparison logic (could be in multiple places)
-- No graph visibility into password reset implementation details
+- Frontend-only bug but affects critical user flow (password reset)
+- Potential for hidden coupling with other auth forms (signup/login)
+- Graph data is thin-no direct nodes for reset password logic, increasing risk of undetected dependencies
 
 **Stop conditions (agent must halt and ask human):**
 
-- Cannot locate the password reset form component after inspecting likely files
-- Password comparison logic is in backend (would require backend changes)
-- Form validation involves complex state management not visible in frontend code
-- Any modification would require changes to backend auth endpoints
+- Cannot locate the password reset form component after inspecting likely_affected_areas
+- Password validation logic is shared with signup/login flows (risk of regression)
+- Backend API changes are required to fix the issue
+- The bug is in a third-party library (e.g., React Hook Form) rather than custom code
+- If the correct fix requires editing a file outside editable_paths, stop and report which file and why instead of proceeding or expanding scope.
 
 **Approval triggers (blocks merge):**
 
-- Changes touch shared validation utilities used by other forms
-- Modifications affect auth-related state management
-- Any backend API changes are needed
+- Changes touch shared authentication state management
+- Modifications required in backend password reset endpoint
+- Test failures in existing password-related tests after the fix
 
 ## 8. Executor Packet
 
@@ -169,13 +170,12 @@ _See `executor-prompt.md` for the agent-ready prompt._
 
 **Patch expectations:**
 
-- Minimal changes to password comparison logic in frontend form validation
-- No changes to backend files
-- No changes to config files (package.json, biome.json)
-- Added or updated tests for password matching validation
-- No changes to unrelated auth flows
+- Minimal diff touching only the password comparison logic in the reset password form
+- No changes to backend or API client code
+- Preservation of all other validation rules
+- New or updated tests for the password reset form
 
-**Reporting format:** {'summary': 'Brief description of the fix', 'files_changed': ['list of modified files'], 'changes_made': ['description of each change'], 'tests_added': ['list of new/updated tests'], 'test_results': 'output of validation commands', 'manual_verification': 'steps taken to verify the fix', 'risks_identified': ['any potential risks not mitigated']}
+**Reporting format:** JSON with keys: { files_modified: [], root_cause: '', acceptance_criteria_met: boolean, tests_added: [], manual_verification_notes: '' }
 
 ---
 

@@ -32,6 +32,19 @@ Each arm runs across executor tiers (haiku → sonnet → opus → fable) to obs
 Work Order delta varies with executor strength. Each run starts from a clean branch at
 the pinned SHA; agents never see each other's work.
 
+## Contamination check (mandatory for every task)
+
+Famous repos with merged fixes are memorized by frontier models: on
+chatbot-ui/001 the executor named the upstream PR by number and reproduced its
+fix from memory. Localization/scope claims from such tasks are void. Protocol:
+
+1. Prefer issues closed AFTER the executor's knowledge cutoff.
+2. After any run, scan the agent transcript for the upstream PR/issue number or
+   "known fix" language; if present, mark the run `contaminated` in notes.md and
+   exclude it from raw-vs-WO localization comparisons.
+3. Contaminated tasks remain usable for CONTRACT metrics (scope compliance,
+   stop behavior) — memory of the fix does not grant memory of our Work Order.
+
 ## Claim discipline
 
 We are not claiming Sembl makes models smarter. We test whether the SAME agent performs

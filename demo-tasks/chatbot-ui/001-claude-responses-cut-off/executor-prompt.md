@@ -1,33 +1,31 @@
-# Executor Prompt - wo-chatbotui-1781182543-claude-3-responses-get-cut-off-after-a-f
+# Executor Prompt - wo-chatbotui-1781196195-claude-3-responses-in-the-app-get-cut-of
 
 _Paste this directly into Claude Code, Aider, Cursor, or any other AI coding agent._
 _Do not modify the scope, forbidden areas, or stop conditions._
 
 ---
 
-Your task is to Fix the truncation of Claude 3 responses in the OpenAI assistants API route by ensuring full response streaming or buffering. Original request: claude 3 responses get cut off after a few words. User-visible outcome: Claude 3 responses are no longer cut off and display in full to the user. Non-goals: Modify any non-Claude 3 model handling; Change the API endpoint structure or URL; Adjust authentication or rate-limiting logic; Update frontend UI components for response rendering. You MAY only edit these paths: lib/envs.ts; lib/utils.ts; supabase/types.ts; context/context.tsx; app/api/keys/route.ts; components/ui/input.tsx; components/ui/button.tsx; lib/server/server-utils.ts. You must NOT touch: context/context.tsx; supabase/types.ts; lib/envs.ts; lib/server/server-utils.ts; types/valid-keys.ts; components/; db/; worker/. Inspect these files before changing code: lib/envs.ts; lib/utils.ts; db/messages.ts; jest.config.ts; supabase/types.ts; context/context.tsx; app/api/keys/route.ts; components/ui/input.tsx; components/ui/button.tsx; lib/chat-setting-limits.ts; lib/server/server-utils.ts; components/chat/chat-ui.tsx. Acceptance criteria: Claude 3 responses are delivered in full without truncation; No regression in response latency for Claude 3 or other models; Existing unit/integration tests (if any) continue to pass; Response headers (e.g., Content-Type) remain consistent with existing behavior. Stop and ask the human if: If the fix requires changes to shared utilities (e.g., lib/utils.ts) not in editable_paths; If the root cause is in a dependency (e.g., OpenAI SDK) requiring version updates; If the issue stems from upstream API limitations (e.g., Claude 3 provider truncation); If changes to package.json or other forbidden_areas are needed; No failing test file is present in the repo; ask the human for the exact failing test path before changing implementation.. Patch expectations: Minimal changes to app/api/assistants/openai/route.ts (e.g., streaming buffer size, chunk handling, or response concatenation logic); No changes to imports/dependencies unless absolutely necessary; Preservation of all existing response headers and metadata. Validate with: curl -X GET http://localhost:3000/api/assistants/openai?model=claude-3-sonnet -H 'Authorization: Bearer TEST_KEY' -v | grep -i 'truncat'; npm run lint; npm run type-check; npm run test; npm run build. Report your work using this format: {'summary': 'Brief description of the root cause and fix', 'changes': 'List of modified lines/files with before/after', 'validation': 'Results of validation_commands and manual checks', 'risks': 'Any potential regressions or edge cases not covered', 'tests': 'New/updated test cases and their coverage'}
+Your task is to Fix streaming truncation for Claude 3 models by correcting the API client or chat handler logic that prematurely terminates the response stream. Original request: claude 3 responses in the app get cut off after a few words or tokens - i added anthropic credits, pasted a fresh api key, default settings, and the very first answer stops mid-sentence every time. increasing context length in settings did nothing. gpt models work fine, it's only the claude models. please fix so claude responses stream to completion.. User-visible outcome: Claude 3 model responses stream to completion without mid-sentence truncation, matching the behavior of GPT models. Non-goals: Modify non-Claude model streaming behavior; Change UI rendering logic unless directly causing truncation; Alter API key handling or authentication flows; Update dependencies or package.json; Modify Supabase types or database schemas. You MAY only edit these paths: components/workspace/workspace-settings.tsx; components/utility/profile-settings.tsx; components/chat/quick-settings.tsx; components/ui/chat-settings-form.tsx; app/api/chat/anthropic/route.ts; app/[locale]/[workspaceid]/layout.tsx; context/context.tsx; components/models/model-select.tsx. You must NOT touch: package.json; .eslintrc.json; types/; supabase/types.ts; db/; worker/. Inspect these files before changing code: components/workspace/workspace-settings.tsx; lib/models/llm/anthropic-llm-list.ts; db/models.ts; db/workspaces.ts; context/context.tsx; lib/consume-stream.ts; lib/models/fetch-models.ts; public/worker-development.js; components/ui/context-menu.tsx; db/storage/workspace-images.ts; components/chat/chat-settings.tsx; components/chat/quick-settings.tsx. Inspect these tests before changing code: __tests__/lib/openapi-conversion.test.ts. Acceptance criteria: Claude 3 responses stream to full completion without premature truncation; GPT model streaming remains unaffected; No new errors in browser console during Claude 3 streaming; Streaming behavior matches the expected token-by-token delivery. Stop and ask the human if: If changes to ChatbotUIContext are required (high risk of breaking other features); If the root cause is identified as a third-party library bug (e.g., Anthropic SDK); If the fix requires modifying Supabase client initialization; If truncation persists after exhausting likely_affected_areas; If the correct fix requires editing a file outside editable_paths, stop and report which file and why instead of proceeding or expanding scope.. Patch expectations: Fix in use-chat-handler.tsx: Correct stream handling for Claude models (e.g., remove premature stream closure, fix chunk aggregation); Fix in browser-client.ts: Adjust Claude API client to properly handle streaming responses (e.g., timeout settings, response parsing); No changes to message.tsx or chat-ui.tsx unless rendering is proven to cause truncation; No modifications to context/context.tsx without approval. Validate with: npm test -- __tests__/lib/openapi-conversion.test.ts; npm run lint; npm run type-check; npm run build; npm run test. Report your work using this format: Provide: (1) Root cause (file:line), (2) Fix applied, (3) Validation results (Claude 3 streaming test, GPT parity check, console errors), (4) Any manual checks performed.
 
 ---
 
 ## Scope enforcement
 
 **You MAY only edit these paths:**
-- `lib/envs.ts`
-- `lib/utils.ts`
-- `supabase/types.ts`
+- `components/workspace/workspace-settings.tsx`
+- `components/utility/profile-settings.tsx`
+- `components/chat/quick-settings.tsx`
+- `components/ui/chat-settings-form.tsx`
+- `app/api/chat/anthropic/route.ts`
+- `app/[locale]/[workspaceid]/layout.tsx`
 - `context/context.tsx`
-- `app/api/keys/route.ts`
-- `components/ui/input.tsx`
-- `components/ui/button.tsx`
-- `lib/server/server-utils.ts`
+- `components/models/model-select.tsx`
 
 **You must NOT touch:**
-- `context/context.tsx`
+- `package.json`
+- `.eslintrc.json`
+- `types/`
 - `supabase/types.ts`
-- `lib/envs.ts`
-- `lib/server/server-utils.ts`
-- `types/valid-keys.ts`
-- `components/`
 - `db/`
 - `worker/`
 
@@ -35,14 +33,15 @@ Your task is to Fix the truncation of Claude 3 responses in the OpenAI assistant
 
 Stop immediately and ask the human if any of these occur:
 
-- If the fix requires changes to shared utilities (e.g., lib/utils.ts) not in editable_paths
-- If the root cause is in a dependency (e.g., OpenAI SDK) requiring version updates
-- If the issue stems from upstream API limitations (e.g., Claude 3 provider truncation)
-- If changes to package.json or other forbidden_areas are needed
-- No failing test file is present in the repo; ask the human for the exact failing test path before changing implementation.
+- If changes to ChatbotUIContext are required (high risk of breaking other features)
+- If the root cause is identified as a third-party library bug (e.g., Anthropic SDK)
+- If the fix requires modifying Supabase client initialization
+- If truncation persists after exhausting likely_affected_areas
+- If the correct fix requires editing a file outside editable_paths, stop and report which file and why instead of proceeding or expanding scope.
 
 ## Patch expectations
 
-- Minimal changes to app/api/assistants/openai/route.ts (e.g., streaming buffer size, chunk handling, or response concatenation logic)
-- No changes to imports/dependencies unless absolutely necessary
-- Preservation of all existing response headers and metadata
+- Fix in use-chat-handler.tsx: Correct stream handling for Claude models (e.g., remove premature stream closure, fix chunk aggregation)
+- Fix in browser-client.ts: Adjust Claude API client to properly handle streaming responses (e.g., timeout settings, response parsing)
+- No changes to message.tsx or chat-ui.tsx unless rendering is proven to cause truncation
+- No modifications to context/context.tsx without approval

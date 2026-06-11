@@ -58,10 +58,32 @@ defect: **wrong editable_paths**.
    upstream PR; prefer post-cutoff issues — chatbot-ui/001 is memorized by Claude
    models and unusable for localization claims).
 
+## 0.1.10 verification — localization recall after the fix (2026-06-11)
+
+All five changes landed in sembl 0.1.10 (relevance-first `_rank_editable_paths`,
+failure-trace + depth-scaled content bonuses, deterministic contract reconciliation,
+Lock-7 permission-to-stop, `sembl validate`, contamination protocol). Regenerated the
+WO for every task with the same task text + full graph pipeline:
+
+| repo | reference fix file | 0.1.8 recall | 0.1.10 recall |
+|------|--------------------|--------------|---------------|
+| httpie-cli | httpie/ssl_.py | 0/1 (inspect-only) | **1/1 editable** |
+| katana | browser.go, crawler.go, headless.go | 1/3 | **3/3 editable** |
+| fastapi-template | frontend/src/utils.ts | 0/1 (absent everywhere) | **1/1 editable** |
+| chatbot-ui | app/api/chat/anthropic/route.ts | 0/1 (wrong route) | **1/1 editable** |
+
+Editable∩forbidden contradictions: 0 across all four (was ≥1 each). The fastapi and
+chatbot-ui wins are driven by `_failure_trace_signals` lifting the file that *contains*
+the quoted error string ("The passwords do not match"); katana's two missing files
+came back via the depth-scaled content bonus (files mentioning proxy+chrome+headless
+together outrank single-term keyword hits). The demo-task dirs now hold the 0.1.10 WOs.
+
 ## Status
 
-- fable runs: still ON HOLD until items 1–3 land (owner decision).
-- codex limits exhausted mid-pass (gpt-5.5 medium covered katana + fastapi); chatbot-ui
-  pair ran on haiku.
+- Localization gate: **PASSED 4/4.** Next: re-run sembl executor arms (haiku → sonnet,
+  then opus per owner gate) against the corrected WOs — expectation is the katana and
+  chatbot-ui STOPs convert to in-scope fixes, and `sembl validate` confirms scope.
+- fable runs: still ON HOLD until the executor re-test confirms the corrected WOs
+  produce in-scope fixes (owner decision).
 - Toolchain validation unavailable for katana (no Go) and the two TS repos (heavy
   installs); those tasks are scope-metric tasks by design of this fast pass.

@@ -1,7 +1,7 @@
-# Work Order - wo-httpiecli-1781163174-httpie-is-completely-broken-for-https-si
+# Work Order - wo-httpiecli-1781186027-httpie-is-completely-broken-for-https-si
 
-**Repo:** `httpie-cli` | **Branch:** `pinned-base` | **Risk:** `HIGH`
-**Created:** 2026-06-11T07:32:54.868956+00:00
+**Repo:** `httpie-cli` | **Branch:** `run-current` | **Risk:** `HIGH`
+**Created:** 2026-06-11T13:53:47.689591+00:00
 **Task type:** `bugfix`
 
 ---
@@ -11,31 +11,32 @@
 **Original request:**
 > httpie is completely broken for https since requests 2.32.3 - in a fresh venv every https request fails with SSLError: CERTIFICATE_VERIFY_FAILED certificate verify failed: unable to get local issuer certificate. repro: pip install httpie then https https://raw.githubusercontent.com/Homebrew/homebrew-core/HEAD/Formula/h/httpie.rb . worked fine on older requests. apparently requests changed something about ssl contexts in 2.32.3. please fix this so plain https requests verify against the system certs again.
 
-**Clarified goal:** Fix SSL certificate verification for HTTPS requests in httpie by ensuring the requests library uses system certificates after version 2.32.3
+**Clarified goal:** Fix SSL certificate verification for HTTPS requests in httpie to restore system cert trust after requests 2.32.3 changes
 
-**User-visible outcome:** HTTPS requests (e.g., `https https://raw.githubusercontent.com/...`) succeed without SSLError: CERTIFICATE_VERIFY_FAILED
+**User-visible outcome:** HTTPS requests (e.g., `http https://example.com`) work without SSLError: CERTIFICATE_VERIFY_FAILED in fresh venvs
 
 ## 2. Boundary Lock
 
 **Non-goals:**
 
-- Change default HTTP behavior
-- Modify non-HTTPS request handling
-- Alter CLI argument parsing
-- Update documentation for unrelated features
+- Add new CLI flags for SSL verification
+- Modify packaging scripts (extras/)
+- Change documentation
+- Alter non-SSL-related HTTP client behavior
 
 **Must not change:**
 
-- Existing HTTP (non-HTTPS) request behavior
-- Custom certificate verification options (e.g., --verify)
-- Proxy handling
-- Authentication flows
+- Default behavior for HTTP (non-HTTPS) requests
+- Custom SSL context configurations explicitly set by users
+- Existing CLI argument parsing
+- Response handling or output formatting
 
 **Forbidden areas (agent must not touch):**
 
-- docs/README.md
 - extras/packaging/linux/scripts/http_cli.py
-- httpie/__main__.py
+- httpie_cli.py
+- docs/
+- extras/scripts/
 
 ## 3. Scope Lock
 
@@ -54,20 +55,20 @@
 
 **Editable paths (agent MAY modify):**
 
-- extras/packaging/linux/scripts/httpie_cli.py
-- httpie/__main__.py
-- httpie/manager/__main__.py
-- extras/scripts/generate_man_pages.py
-- extras/packaging/linux/scripts/http_cli.py
 - httpie/core.py
+- httpie/manager/core.py
+- httpie/cli/requestitems.py
+- httpie/output/formatters/headers.py
+- httpie/legacy/v3_2_0_session_header_format.py
 - httpie/client.py
-- httpie/config.py
+- httpie/ssl_.py
+- extras/packaging/linux/scripts/httpie_cli.py
+- tests/test_ssl.py
 
 **Read-only context (inspect, do not modify):**
 
-- tests/
-- docs/
-- extras/
+- docs/README.md
+- extras/packaging/linux/scripts/http_cli.py
 - README.md
 - httpie/cli/argtypes.py
 
@@ -102,9 +103,9 @@
 **Architecture notes:**
 
 - HTTPie uses the `requests` library for HTTP(S) requests
-- SSL verification is typically configured via `requests.Session` or per-request `verify` parameter
-- System certificates are usually loaded via `certifi` or platform-specific paths
-- Changes must respect existing `--verify` CLI flag behavior
+- SSL context configuration must not override system cert trust by default
+- Changes in requests 2.32.3 affected implicit SSL context behavior
+- Packaging scripts (extras/) are read-only and must not be modified
 
 **Project rules found:**
 
@@ -125,34 +126,35 @@ and by reporting any bugs you might encounter.
 
 **Acceptance criteria:**
 
-1. A fresh venv with `requests>=2.32.3` can successfully execute `https https://raw.githubusercontent.com/Homebrew/homebrew-core/HEAD/Formula/h/httpie.rb` without SSL errors
-2. Existing `--verify` flag behavior remains unchanged (e.g., `--verify=no` still disables verification)
-3. No regression in HTTP (non-HTTPS) requests
-4. All existing SSL-related tests pass
+1. A fresh venv with `pip install httpie` can successfully execute `http https://raw.githubusercontent.com/Homebrew/homebrew-core/HEAD/Formula/h/httpie.rb` without SSLError
+2. HTTPS requests to other domains (e.g., `https://httpbin.org/get`) also verify certificates correctly
+3. HTTP (non-HTTPS) requests continue to work as before
+4. Existing tests for HTTPS/SSL functionality pass
 
 **Regressions to preserve:**
 
-- Custom certificate paths via `--verify`
-- Disable verification with `--verify=no`
-- Proxy support over HTTPS
-- Client certificate authentication
+- Custom `--verify` flag behavior (e.g., `--verify=no`) must remain unchanged
+- Proxy configurations must not break
+- Session/cookie handling must remain intact
+- All existing HTTP methods (GET, POST, etc.) must work
 
 ## 6. Proof Lock
 
 **Validation commands:**
 
 - `python -m httpie https://raw.githubusercontent.com/Homebrew/homebrew-core/HEAD/Formula/h/httpie.rb`
+- `python -m httpie https://httpbin.org/get`
 - `python -m pytest tests/test_ssl.py -v`
 
 **Tests to add or update:**
 
-- tests/test_ssl.py (add test for system cert verification with requests>=2.32.3)
+- tests/test_ssl.py (add regression test for requests 2.32.3+ system cert verification)
 
 **Manual checks:**
 
-1. Verify the fix works on macOS, Linux, and Windows (different system cert paths)
-2. Test with `requests==2.32.2` to ensure backward compatibility
-3. Test with custom `--verify` paths
+1. Verify the fix works in a fresh venv with only `requests>=2.32.3` and `httpie` installed
+2. Test with different system cert stores (macOS, Linux, Windows if applicable)
+3. Confirm no performance regression in HTTPS handshake
 
 ## 7. Safety Lock
 
@@ -160,23 +162,24 @@ and by reporting any bugs you might encounter.
 
 **Risk reasons:**
 
-- Affects core HTTPS functionality (all secure requests)
-- Involves SSL/TLS configuration which is security-sensitive
-- Cross-platform compatibility concerns (system cert paths vary)
-- Dependency behavior change (`requests` 2.32.3) with potential hidden side effects
+- Affects core HTTPS functionality (security-critical)
+- Involves SSL/TLS verification (high-risk area)
+- Changes may impact all HTTPS requests globally
+- Potential for introducing security vulnerabilities if misconfigured
 
 **Stop conditions (agent must halt and ask human):**
 
-- If the fix requires modifying `certifi` or platform-specific cert paths directly
-- If the solution involves downgrading `requests`
-- If changes to `httpie/__main__.py` are deemed necessary (forbidden per graph)
-- If the root cause is unclear after inspecting `requests` 2.32.3 changelog
+- If the fix requires modifying `requests` library source or dependencies
+- If the solution involves disabling SSL verification by default
+- If changes to packaging scripts (extras/) are deemed necessary
+- If the root cause is identified as a downstream issue (e.g., OpenSSL configuration)
+- If the correct fix requires editing a file outside editable_paths, stop and report which file and why instead of proceeding or expanding scope.
 
 **Approval triggers (blocks merge):**
 
-- Changes to default SSL verification behavior
-- Modifications to how `verify` parameter is passed to `requests`
-- Any platform-specific conditional logic for cert paths
+- Any change to default SSL verification behavior
+- Modifications to core session/connection management
+- If the fix touches files outside `httpie/` directory
 
 ## 8. Executor Packet
 
@@ -184,12 +187,12 @@ _See `executor-prompt.md` for the agent-ready prompt._
 
 **Patch expectations:**
 
-- Minimal changes to SSL/TLS configuration in httpie's requests usage
-- Explicit system certificate path handling if requests 2.32.3+ no longer defaults to it
-- No changes to CLI argument parsing or user-facing behavior beyond fixing the bug
-- Test additions for SSL verification with modern requests versions
+- Minimal changes to SSL context initialization in HTTP client code
+- Explicit configuration to use system certs (e.g., `verify=True` or default SSL context)
+- No hardcoded certificate paths
+- Backward-compatible with older `requests` versions
 
-**Reporting format:** A JSON object with: { 'changes': [list of modified files with brief descriptions], 'validation': { 'commands': [list of validation commands run], 'results': [pass/fail for each] }, 'tests': { 'added': [list of new tests], 'updated': [list of modified tests] }, 'manual_checks': [list of manual verifications performed], 'risks': [any unresolved concerns] }
+**Reporting format:** {'summary': 'Brief description of the root cause and fix', 'changes': ['List of modified files with specific changes'], 'validation': ['Results of validation commands'], 'risks': ['Any potential risks or tradeoffs'], 'test_coverage': ['New/updated tests and their status']}
 
 ---
 

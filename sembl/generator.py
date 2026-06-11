@@ -756,10 +756,8 @@ def _ground_work_order_in_repo(wo: WorkOrder, probe: RepoProbe):
         ),
         wo.original_request,
     )
-    repo_hits = _rank_task_paths(
-        _scan_task_related_paths(root, wo.original_request, ignored),
-        wo.original_request,
-    )
+    scanned_paths, content_hits = _scan_task_paths_detailed(root, wo.original_request, ignored)
+    repo_hits = _rank_task_paths(scanned_paths, wo.original_request)
     candidate_paths = _dedupe(graph_paths + repo_hits)
     candidate_files = [path for path in candidate_paths if (root / path).is_file()]
     candidate_test_files = [path for path in candidate_files if _looks_like_test_path(path)]
@@ -787,13 +785,32 @@ def _ground_work_order_in_repo(wo: WorkOrder, probe: RepoProbe):
         path for path in _valid_existing_paths(wo.editable_paths, root, ignored)
         if _is_editable_candidate(path, wo.original_request)
     ]
+    # Files the LLM wants inspected are edit-scope candidates too: across the demo
+    # matrix the true fix file repeatedly reached files_to_inspect while missing
+    # editable_paths, leaving executors forbidden to edit the file the WO itself
+    # pointed them at.
+    inspect_editable = [
+        path for path in _valid_existing_files(wo.files_to_inspect, root, ignored)
+        if _is_editable_candidate(path, wo.original_request)
+    ]
     direct_editable = [path for path in editable_candidates if path not in set(graph_editable)]
-    wo.editable_paths = _rank_editable_paths(
+    all_editable_candidates = _dedupe(
+        llm_editable + graph_editable + direct_editable + inspect_editable
+    )
+    trace_hits = _failure_trace_files(
+        root,
+        all_editable_candidates,
+        _failure_trace_signals(wo.original_request),
+    )
+    ranked_editable = _rank_editable_paths(
         llm_editable,
         graph_editable,
-        direct_editable,
+        _dedupe(direct_editable + inspect_editable),
         wo.original_request,
-    )[:8]
+        trace_hits=trace_hits,
+        content_hits=content_hits,
+    )
+    wo.editable_paths = _cap_with_graph_floor(ranked_editable, set(graph_editable), cap=8)
     wo.files_to_inspect = _rank_task_paths(
         _merge_existing_paths(
             _valid_existing_files(wo.files_to_inspect, root, ignored),
@@ -838,7 +855,78 @@ def _ground_work_order_in_repo(wo: WorkOrder, probe: RepoProbe):
         wo.editable_paths,
         ignored,
     )
+    _reconcile_contract(wo, root, ignored)
     _refresh_executor_prompt_from_grounded_fields(wo)
+
+
+def _reconcile_contract(wo: WorkOrder, root: Path, ignored: set[str] | None = None):
+    """Deterministic contract-consistency repair (no LLM).
+
+    The demo matrix showed every generated WO contradicting itself somewhere:
+    paths in both editable and forbidden, patch expectations naming non-editable
+    files, test additions demanded with no editable test path. Executors resolve
+    those contradictions unpredictably (silent violation, worse-placed fix, or a
+    full stop), so the contract must be made coherent before it is written.
+    """
+    # 1. If the WO demands test work, a test path must be editable. (Runs first:
+    #    later rules must see the final editable set, or the appended test path
+    #    can reintroduce an editable/forbidden conflict.)
+    wants_tests = bool(wo.tests_to_add_or_update) or any(
+        re.search(r"\b(add|adding|new|write|create|update)\w*\b[^.;]*\btests?\b", str(text).lower())
+        for text in (wo.patch_expectations or [])
+    )
+    if wants_tests and not any(_looks_like_test_path(path) for path in wo.editable_paths):
+        test_path = next(
+            (path for path in wo.tests_to_inspect or [] if _path_exists(root, path)),
+            None,
+        ) or next(iter(wo.tests_to_add_or_update or []), None)
+        if test_path:
+            _append_unique(wo.editable_paths, _clean_path(str(test_path)))
+
+    editable = _dedupe(_clean_path(str(p)) for p in wo.editable_paths or [])
+
+    # 2. Forbidden may not contradict editable — editable is the actionable scope,
+    #    so a forbidden entry that names an editable file (or an ancestor dir of
+    #    one) is dropped.
+    kept_forbidden = []
+    for raw in wo.forbidden_areas or []:
+        entry = _clean_path(str(raw))
+        if not entry:
+            continue
+        prefix = entry.rstrip("/") + "/"
+        if entry in editable or any(path.startswith(prefix) for path in editable):
+            continue
+        kept_forbidden.append(entry)
+    wo.forbidden_areas = _dedupe(kept_forbidden)
+
+    # 3. Patch expectations may not name existing repo files outside editable
+    #    scope (test files excepted — rule 1 makes those editable).
+    editable_set = set(editable)
+    consistent = []
+    for value in wo.patch_expectations or []:
+        text = str(value).strip()
+        tokens = [
+            token for token in _extract_path_like_tokens(text)
+            if _path_exists(root, token)
+        ]
+        if any(
+            token not in editable_set and not _looks_like_test_path(token)
+            for token in tokens
+        ):
+            continue
+        consistent.append(text)
+    if not consistent and editable:
+        consistent.append("Keep implementation changes within the grounded editable paths.")
+    wo.patch_expectations = consistent
+
+    # 4. Lock 7: permission to stop. Converts silent out-of-scope edits (weak
+    #    executors) and dead-end tunneling (strong executors) into a report.
+    if wo.editable_paths:
+        _append_unique(
+            wo.stop_conditions,
+            "If the correct fix requires editing a file outside editable_paths, "
+            "stop and report which file and why instead of proceeding or expanding scope.",
+        )
 
 
 def _refresh_executor_prompt_from_grounded_fields(wo: WorkOrder):
@@ -912,14 +1000,30 @@ def _scan_task_related_paths(
     task: str,
     ignored_patterns: set[str] | None = None,
 ) -> list[str]:
+    paths, _ = _scan_task_paths_detailed(root, task, ignored_patterns)
+    return paths
+
+
+def _scan_task_paths_detailed(
+    root: Path,
+    task: str,
+    ignored_patterns: set[str] | None = None,
+) -> tuple[list[str], set[str]]:
+    """Task-related paths plus the subset matched by file CONTENT.
+
+    A content match (the file mentions the failing term) is a much stronger
+    edit-scope signal than a path-name match, so the ranker needs to know which
+    is which.
+    """
     terms = set(_task_terms(task))
     if {"login", "redirect", "signin", "session"} & terms:
         terms.update({"auth", "callback", "oauth", "signin", "session", "login"})
     if not terms:
-        return []
+        return [], set()
 
     results = []
-    extensions = {".ts", ".tsx", ".js", ".jsx", ".py"}
+    content_hits: dict = {}
+    extensions = {".ts", ".tsx", ".js", ".jsx", ".py", ".go"}
 
     for path in root.rglob("*"):
         rel = path.relative_to(root).as_posix()
@@ -932,17 +1036,20 @@ def _scan_task_related_paths(
             continue
         if path.suffix.lower() not in extensions:
             continue
-        if any(term in haystack for term in terms):
+        path_matched = any(term in haystack for term in terms)
+        if path_matched:
             results.append(rel)
-            continue
         try:
             content = path.read_text(errors="ignore").lower()
         except Exception:
             continue
-        if any(term in content for term in terms):
-            results.append(rel)
+        matched_terms = sum(1 for term in terms if term in content)
+        if matched_terms:
+            content_hits[rel] = matched_terms
+            if not path_matched:
+                results.append(rel)
 
-    return _dedupe(results)
+    return _dedupe(results), content_hits
 
 
 def _rank_task_paths(paths: list[str], task: str) -> list[str]:
@@ -957,26 +1064,123 @@ def _rank_editable_paths(
     graph_paths: list[str],
     direct_paths: list[str],
     task: str,
+    trace_hits: set[str] | frozenset = frozenset(),
+    content_hits: dict | set[str] | frozenset = frozenset(),
 ) -> list[str]:
-    """Rank edit scope by provenance before weak path-name heuristics.
+    """Rank edit scope by task relevance first, provenance second.
 
-    Graph-surfaced files are deliberate structural context. They must outrank
-    non-graph LLM picks and direct scans, or graph-on runs can stay identical to
-    graph-off when an 8-item LLM list crowds graph candidates out.
+    0.1.9: relevance-first. The 0.1.8 provenance tiers let graph-surfaced entry
+    points crowd out the actual fix file — graphify summaries name "key entry
+    points", so __main__/cmd/packaging scripts arrived with top provenance and the
+    8-item cap dropped content-matched files (demo-tasks/CROSS-REPO-FINDINGS.md:
+    recall 0/1, 1/3, 0/1, 0/1 across four repos). Failure-trace hits (the task's
+    quoted error text found in file content) and task-term scores now dominate;
+    provenance only breaks ties; entry points and config files carry a penalty.
     """
     graph_set = set(graph_paths)
     llm_set = set(llm_paths)
 
     def score(path: str) -> tuple[int, int, int, str]:
+        value = _task_path_score(path, task)
+        if path in trace_hits:
+            # A literal failure-trace match (the task's quoted error text found
+            # in this file) is near-certain localization — it must beat any
+            # realistic stack of keyword matches in prettier-named files.
+            value += 25
+        if path in content_hits:
+            # Scaled by how many distinct task terms the file CONTAINS: a file
+            # mentioning proxy+chrome+headless is a far stronger candidate than
+            # one mentioning a single broad term.
+            matched = content_hits[path] if isinstance(content_hits, dict) else 1
+            value += min(3 * matched, 21)
+        value -= _entry_point_penalty(path)
         if path in graph_set:
             provenance = 0
         elif path in llm_set:
             provenance = 1
         else:
             provenance = 2
-        return (provenance, -_task_path_score(path, task), len(path), path)
+        return (-value, provenance, len(path), path)
 
     return sorted(_dedupe(llm_paths + graph_paths + direct_paths), key=score)
+
+
+def _cap_with_graph_floor(ranked: list[str], graph_set: set[str], cap: int = 8) -> list[str]:
+    """Cap the ranked list while guaranteeing one slot to graph context.
+
+    Relevance-first ranking can push a zero-keyword graph-surfaced file past the
+    cap (keyword heuristics are weak — the 0.1.7 lesson). If no graph candidate
+    survives, the best-ranked one takes the last slot so structural context is
+    never silently dropped.
+    """
+    capped = ranked[:cap]
+    if graph_set and not any(path in graph_set for path in capped):
+        best_graph = next((path for path in ranked if path in graph_set), None)
+        if best_graph:
+            capped = capped[: cap - 1] + [best_graph] if len(capped) >= cap else capped + [best_graph]
+    return capped
+
+
+_ENTRY_POINT_NAMES = {
+    "__main__.py", "__init__.py", "setup.py", "conftest.py",
+    "main.go", "index.ts", "index.tsx", "index.js", "index.jsx",
+}
+_ENTRY_POINT_SEGMENTS = {
+    "cmd", "scripts", "extras", "examples", "tools", "packaging",
+    "dist", "build", "bin",
+}
+_CONFIG_SUFFIXES = (
+    ".json", ".toml", ".cfg", ".ini", ".yaml", ".yml", ".lock",
+)
+
+
+def _entry_point_penalty(path: str) -> int:
+    """Penalty for files that are launchers/packaging/config, not behavior.
+
+    Entry points are graph-central (everything reaches them) and config files
+    keyword-match broad tasks, but neither is usually where a bugfix lives.
+    """
+    lower = path.lower()
+    penalty = 0
+    if Path(lower).name in _ENTRY_POINT_NAMES:
+        penalty += 6
+    if set(lower.split("/")[:-1]) & _ENTRY_POINT_SEGMENTS:
+        penalty += 6
+    if lower.endswith(_CONFIG_SUFFIXES):
+        penalty += 6
+    return min(penalty, 10)
+
+
+def _failure_trace_signals(task: str) -> list[str]:
+    """Literal strings from the task that can pinpoint the fix file.
+
+    Quoted phrases ("The passwords do not match") and SCREAMING_SNAKE error
+    tokens are far stronger localizers than keyword overlap: when one appears in
+    a source file, that file almost certainly owns the failing behavior.
+    """
+    signals = []
+    for quote_pat in (r'"([^"]{6,120})"', r"'([^']{6,120})'", r"[‘’“”]([^‘’“”]{6,120})[‘’“”]"):
+        signals.extend(re.findall(quote_pat, task))
+    signals.extend(re.findall(r"\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+){1,}\b", task))
+    return _dedupe([s.strip() for s in signals if s.strip()])
+
+
+def _failure_trace_files(root: Path, paths: list[str], signals: list[str]) -> set[str]:
+    if not signals:
+        return set()
+    hits = set()
+    lowered = [s.lower() for s in signals]
+    for path in paths:
+        full = root / path
+        if not full.is_file():
+            continue
+        try:
+            content = full.read_text(errors="ignore").lower()
+        except Exception:
+            continue
+        if any(signal in content for signal in lowered):
+            hits.add(path)
+    return hits
 
 
 def _task_path_score(path: str, task: str) -> int:
@@ -1228,7 +1432,11 @@ def _looks_like_test_path(path: str) -> bool:
         "/test" in lower
         or lower.startswith("test")
         or lower.startswith("__tests__/")
-        or lower.endswith((".test.ts", ".test.tsx", ".spec.ts", ".spec.tsx", "_test.py"))
+        or lower.endswith((
+            ".test.ts", ".test.tsx", ".spec.ts", ".spec.tsx",
+            ".test.js", ".test.jsx", ".spec.js",
+            "_test.py", "_test.go",
+        ))
     )
 
 

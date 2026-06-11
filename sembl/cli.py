@@ -226,6 +226,78 @@ def show(repo, wo_id, output_file):
     console.print(Markdown(content))
 
 
+# ── sembl validate ────────────────────────────────────────────────────────────
+
+@main.command()
+@click.option("--repo", "-r", default=".", show_default=True,
+              help="Path to the repository whose working tree should be checked.")
+@click.option("--id", "wo_id", default=None,
+              help="Work Order ID. Defaults to latest.")
+@click.option("--wo-file", "wo_file", default=None,
+              type=click.Path(exists=True),
+              help="Path to a work-order.json (overrides --id lookup).")
+@click.option("--report", "report_file", default=None,
+              type=click.Path(exists=True),
+              help="Executor report (JSON) to cross-check against the real diff.")
+def validate(repo, wo_id, wo_file, report_file):
+    """Check the working tree (and an executor report) against a Work Order.
+
+    Never trust executor self-reports: compares what actually changed in git
+    against editable_paths/forbidden_areas, and flags claimed-but-unchanged
+    files as fabrications.
+    """
+    import json as _json
+    from .validator import validate_against_work_order, load_report
+
+    repo_path = Path(repo).resolve()
+    if wo_file:
+        wo_json = Path(wo_file)
+    else:
+        wo_dir = _find_wo_dir(repo_path, wo_id)
+        if not wo_dir or not (wo_dir / "work-order.json").exists():
+            console.print("[red]No Work Order found.[/red] Use --wo-file or run [bold]sembl generate[/bold].")
+            sys.exit(1)
+        wo_json = wo_dir / "work-order.json"
+
+    work_order = _json.loads(wo_json.read_text(encoding="utf-8", errors="replace"))
+    report = None
+    if report_file:
+        try:
+            report = load_report(report_file)
+        except Exception as error:
+            console.print(f"[red]Could not parse executor report:[/red] {error}")
+            sys.exit(1)
+
+    result = validate_against_work_order(str(repo_path), work_order, report)
+
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Check")
+    table.add_column("Result")
+    table.add_row("Files changed", str(len(result.changed_files)) or "0")
+    table.add_row("In scope", ", ".join(result.in_scope) or "[dim]none[/dim]")
+    table.add_row(
+        "Forbidden hits",
+        f"[red]{', '.join(result.forbidden_hits)}[/red]" if result.forbidden_hits else "[green]none[/green]",
+    )
+    table.add_row(
+        "Out of scope",
+        f"[yellow]{', '.join(result.out_of_scope)}[/yellow]" if result.out_of_scope else "[green]none[/green]",
+    )
+    if report is not None:
+        table.add_row(
+            "Fabricated claims",
+            f"[red]{', '.join(result.fabricated_claims)}[/red]" if result.fabricated_claims else "[green]none[/green]",
+        )
+        table.add_row(
+            "Unreported changes",
+            f"[yellow]{', '.join(result.unreported_changes)}[/yellow]" if result.unreported_changes else "[green]none[/green]",
+        )
+
+    verdict = "[bold green]PASS[/bold green]" if result.ok else "[bold red]FAIL[/bold red]"
+    console.print(Panel(table, title=f"Work Order validation — {verdict}", border_style="green" if result.ok else "red"))
+    sys.exit(0 if result.ok else 1)
+
+
 # ── sembl list ────────────────────────────────────────────────────────────────
 
 @main.command("list")
