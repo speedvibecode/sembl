@@ -1,0 +1,10 @@
+{
+  "reference_fix": "https://github.com/projectdiscovery/katana/pull/1622",
+  "primary": [
+    "pkg/engine/headless/browser/browser.go",
+    "pkg/engine/headless/crawler/crawler.go",
+    "pkg/engine/headless/headless.go"
+  ],
+  "secondary": [],
+  "notes": "Reference: UserArguments field on the browser launcher + wiring ParseHeadlessOptionalArguments() through crawler.go and headless.go (+8 lines total). Test additions under pkg/engine/headless/ acceptable, not penalized. No Go toolchain on the demo machine — tests cannot be executed; scope metrics primary."
+}

@@ -1,0 +1,6 @@
+{
+  "reference_fix": "https://github.com/fastapi/full-stack-fastapi-template/pull/1171",
+  "primary": ["frontend/src/utils.ts"],
+  "secondary": ["frontend/src/routes/reset-password.tsx"],
+  "notes": "Reference fix is confirmPasswordRules in utils.ts comparing against password || new_password. An alternative valid fix is renaming the field in reset-password.tsx to 'password' — count as secondary, not out-of-scope. Test additions acceptable. No toolchain validation on demo machine; scope metrics primary."
+}

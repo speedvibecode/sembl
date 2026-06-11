@@ -1,0 +1,10 @@
+1. Summary: Fixed password confirmation validation so reset-password compares against `new_password` instead of always comparing against `password`.
+
+2. Files modified:
+`frontend/src/utils.ts`
+`frontend/src/routes/reset-password.tsx`
+`frontend/src/components/UserSettings/ChangePassword.tsx`
+
+3. Verification: Read the reset-password form, shared validator, and all `confirmPasswordRules` call sites; inspected the final diff and confirmed existing default behavior remains for `password` fields while `new_password` forms opt in explicitly.
+
+4. Blockers: Could not run builds or tests because the task specified no Node/Python toolchain validation is available.

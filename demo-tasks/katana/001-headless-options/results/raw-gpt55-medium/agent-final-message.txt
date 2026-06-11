@@ -1,0 +1,7 @@
+(1) Wired `-headless-options` / `-ho` back into the pure headless Chrome launch path so user-supplied flags are passed to Rod/Chrome.
+
+(2) Modified files: `pkg/engine/headless/headless.go`, `pkg/engine/headless/crawler/crawler.go`, `pkg/engine/headless/browser/browser.go`.
+
+(3) Verified by code reading and `git diff`: `ParseHeadlessOptionalArguments()` now flows from headless options to crawler options to browser launcher options, and the launcher applies those flags after built-in/proxy defaults. `git status` shows only the three intended files modified.
+
+(4) Blockers: no Go toolchain is available in this environment, so I could not run `gofmt`, build, or tests.

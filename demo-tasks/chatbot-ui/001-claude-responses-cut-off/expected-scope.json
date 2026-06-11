@@ -1,0 +1,6 @@
+{
+  "reference_fix": "https://github.com/mckaywrigley/chatbot-ui/pull/1571",
+  "primary": ["app/api/chat/anthropic/route.ts"],
+  "secondary": ["package.json", "package-lock.json", "lib/chat-setting-limits.ts"],
+  "notes": "Reference: SDK bump to @anthropic-ai/sdk 0.18.0 + streaming/parsing and error-handling fixes in the anthropic chat route (edge runtime). chat-setting-limits.ts holds Anthropic token limits and is a defensible secondary touch. Tests acceptable. No toolchain validation on demo machine; scope metrics primary."
+}

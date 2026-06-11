@@ -1,0 +1,136 @@
+{
+  "id": "wo-katana-1781181138-katana-s-headless-options-ho-flag-is-ign",
+  "created_at": "2026-06-11T12:32:18.735625+00:00",
+  "schema_version": "0.1.0",
+  "repo_path": "C:\\Users\\totla\\Downloads\\sembl-demo-targets\\katana",
+  "repo_name": "katana",
+  "git_branch": "pinned-base",
+  "git_head_commit": "007a5f4c8e8d4cddef53391aa4d8b800f13b3164",
+  "original_request": "katana's -headless-options / -ho flag is ignored since v1.4.0 - e.g. running katana -headless -ho '--proxy-server=http://127.0.0.1:18080' and chrome never uses the proxy, traffic bypasses it completely. this worked fine in 1.3.x, looks like a regression from the headless rewrite. please fix so headless chrome actually gets the user's custom flags again.",
+  "clarified_goal": "Fix the regression in katana v1.4.0+ where the -headless-options / -ho flag is ignored, causing custom Chrome flags (e.g., proxy-server) to not be applied during headless execution",
+  "user_visible_outcome": "Running `katana -headless -ho '--proxy-server=http://127.0.0.1:18080'` will now correctly route traffic through the specified proxy server, as it did in v1.3.x",
+  "task_type": "bugfix",
+  "non_goals": [
+    "Add new headless flags or options",
+    "Modify non-headless engine behavior",
+    "Change the CLI argument parsing for other flags",
+    "Update documentation or tests for unrelated features"
+  ],
+  "must_not_change": [
+    "Existing headless functionality unrelated to custom flag passing",
+    "CLI argument parsing for other flags",
+    "Behavior of non-headless crawling modes",
+    "Test files (only implementation files may be modified)"
+  ],
+  "forbidden_areas": [
+    "cmd/functional-test/",
+    "cmd/tools/crawl-maze-score/",
+    "cmd/integration-test/",
+    "pkg/engine/headless/headless_test.go"
+  ],
+  "likely_affected_areas": [
+    "pkg/engine/headless",
+    "pkg/engine/headless/",
+    "pkg/engine/headless/js",
+    "pkg/engine/headless/graph",
+    "pkg/engine/headless/types",
+    "pkg/engine/headless/browser",
+    "pkg/engine/headless/captcha",
+    "pkg/engine/headless/crawler",
+    "pkg/engine/headless/captcha/js",
+    "pkg/engine/headless/browser/cookie"
+  ],
+  "editable_paths": [
+    "pkg/engine/headless/headless.go",
+    "pkg/engine/headless/headless_test.go",
+    "pkg/engine/headless/debugger.go",
+    "pkg/utils/queue/stack.go",
+    "cmd/functional-test/main.go",
+    "cmd/tools/crawl-maze-score/main.go",
+    "cmd/integration-test/integration-test.go",
+    "pkg/engine/headless/js/utils.js"
+  ],
+  "read_only_context": [
+    "pkg/engine/headless/headless_test.go",
+    "README.md",
+    "pkg/engine/headless/types"
+  ],
+  "files_to_inspect": [
+    "pkg/engine/headless/headless.go",
+    "pkg/engine/headless/headless_test.go",
+    "pkg/engine/headless/debugger.go",
+    "pkg/engine/headless/js/utils.js",
+    "pkg/engine/headless/js/page-init.js",
+    "pkg/engine/headless/captcha/js/identify.js",
+    "pkg/engine/headless/captcha/js/inject-hcaptcha.js",
+    "pkg/engine/headless/captcha/js/inject-recaptcha.js",
+    "pkg/engine/headless/captcha/js/inject-turnstile.js",
+    "pkg/utils/queue/stack.go",
+    "cmd/functional-test/main.go",
+    "cmd/tools/crawl-maze-score/main.go"
+  ],
+  "project_rules": [],
+  "tests_to_inspect": [
+    "pkg/engine/headless/headless_test.go"
+  ],
+  "architecture_notes": [
+    "Headless Chrome launch logic is centralized in pkg/engine/headless/",
+    "Custom flags must be passed through to the Chrome/Chromium binary at launch",
+    "The regression was introduced during the headless rewrite in v1.4.0"
+  ],
+  "acceptance_criteria": [
+    "Custom flags passed via -ho are applied to the headless Chrome instance",
+    "Proxy server flag (--proxy-server) works as expected when passed via -ho",
+    "No regression in existing headless functionality",
+    "Behavior matches v1.3.x for -ho flag handling"
+  ],
+  "regressions_to_preserve": [
+    "All existing headless crawling behavior not related to custom flags",
+    "CLI argument parsing for other flags remains unchanged",
+    "Non-headless modes continue to work as before"
+  ],
+  "validation_commands": [
+    "katana -headless -ho '--proxy-server=http://127.0.0.1:18080' -u http://example.com -d 1 -jc -kf 2>&1 | grep -i 'proxy' || echo 'Proxy flag not detected in output'",
+    "go test ./pkg/engine/headless/... -v"
+  ],
+  "tests_to_add_or_update": [],
+  "manual_checks": [
+    "Verify with a real proxy server (e.g., mitmproxy) that traffic is routed through it when -ho '--proxy-server=...' is used",
+    "Test multiple custom flags via -ho to ensure all are applied"
+  ],
+  "stop_conditions": [
+    "If the fix requires changes outside pkg/engine/headless/",
+    "If the solution involves modifying test files",
+    "If the change affects non-headless execution paths",
+    "If the fix cannot be validated with the existing test suite and manual checks",
+    "No failing test file is present in the repo; ask the human for the exact failing test path before changing implementation."
+  ],
+  "approval_triggers": [
+    "Any change to the public API of the headless package",
+    "Modifications to flag parsing logic outside the headless package"
+  ],
+  "risk_level": "medium",
+  "risk_reasons": [
+    "Regression in a core feature (headless flag handling)",
+    "Affects user-facing behavior (proxy settings ignored)",
+    "Requires changes to critical path (Chrome launch logic)"
+  ],
+  "executor_prompt": "Your task is to Fix the regression in katana v1.4.0+ where the -headless-options / -ho flag is ignored, causing custom Chrome flags (e.g., proxy-server) to not be applied during headless execution. Original request: katana's -headless-options / -ho flag is ignored since v1.4.0 - e.g. running katana -headless -ho '--proxy-server=http://127.0.0.1:18080' and chrome never uses the proxy, traffic bypasses it completely. this worked fine in 1.3.x, looks like a regression from the headless rewrite. please fix so headless chrome actually gets the user's custom flags again.. User-visible outcome: Running `katana -headless -ho '--proxy-server=http://127.0.0.1:18080'` will now correctly route traffic through the specified proxy server, as it did in v1.3.x. Non-goals: Add new headless flags or options; Modify non-headless engine behavior; Change the CLI argument parsing for other flags; Update documentation or tests for unrelated features. You MAY only edit these paths: pkg/engine/headless/headless.go; pkg/engine/headless/headless_test.go; pkg/engine/headless/debugger.go; pkg/utils/queue/stack.go; cmd/functional-test/main.go; cmd/tools/crawl-maze-score/main.go; cmd/integration-test/integration-test.go; pkg/engine/headless/js/utils.js. You must NOT touch: cmd/functional-test/; cmd/tools/crawl-maze-score/; cmd/integration-test/; pkg/engine/headless/headless_test.go. Inspect these files before changing code: pkg/engine/headless/headless.go; pkg/engine/headless/headless_test.go; pkg/engine/headless/debugger.go; pkg/engine/headless/js/utils.js; pkg/engine/headless/js/page-init.js; pkg/engine/headless/captcha/js/identify.js; pkg/engine/headless/captcha/js/inject-hcaptcha.js; pkg/engine/headless/captcha/js/inject-recaptcha.js; pkg/engine/headless/captcha/js/inject-turnstile.js; pkg/utils/queue/stack.go; cmd/functional-test/main.go; cmd/tools/crawl-maze-score/main.go. Inspect these tests before changing code: pkg/engine/headless/headless_test.go. Acceptance criteria: Custom flags passed via -ho are applied to the headless Chrome instance; Proxy server flag (--proxy-server) works as expected when passed via -ho; No regression in existing headless functionality; Behavior matches v1.3.x for -ho flag handling. Stop and ask the human if: If the fix requires changes outside pkg/engine/headless/; If the solution involves modifying test files; If the change affects non-headless execution paths; If the fix cannot be validated with the existing test suite and manual checks; No failing test file is present in the repo; ask the human for the exact failing test path before changing implementation.. Patch expectations: Changes limited to pkg/engine/headless/headless.go and/or pkg/engine/headless/debugger.go; Modifications to how custom flags are passed to the Chrome binary; No changes to test files or unrelated packages; Minimal diff focusing solely on the flag-passing regression. Validate with: katana -headless -ho '--proxy-server=http://127.0.0.1:18080' -u http://example.com -d 1 -jc -kf 2>&1 | grep -i 'proxy' || echo 'Proxy flag not detected in output'; go test ./pkg/engine/headless/... -v. Report your work using this format: A JSON object with: { \"changes\": [{\"file\": \"path\", \"diff\": \"unified diff\"}], \"validation\": {\"manual\": [\"description of manual tests performed\"], \"automated\": [\"output of validation commands\"]}, \"risks\": [\"any potential risks not covered by tests\"] }",
+  "patch_expectations": [
+    "Changes limited to pkg/engine/headless/headless.go and/or pkg/engine/headless/debugger.go",
+    "Modifications to how custom flags are passed to the Chrome binary",
+    "No changes to test files or unrelated packages",
+    "Minimal diff focusing solely on the flag-passing regression"
+  ],
+  "reporting_format": "A JSON object with: { \"changes\": [{\"file\": \"path\", \"diff\": \"unified diff\"}], \"validation\": {\"manual\": [\"description of manual tests performed\"], \"automated\": [\"output of validation commands\"]}, \"risks\": [\"any potential risks not covered by tests\"] }",
+  "graph_impact_analysis": "**Blast radius**: Headless Chrome launch logic and flag handling in the headless engine.\n\n**Likely edit targets**:\n- `pkg/engine/headless/headless.go` (primary headless logic)\n- `pkg/engine/headless/debugger.go` (server/debugger interaction)\n\n**Hidden coupling / risk**: None detected in provided graph data.\n\n**Keep read-only**:\n- `pkg/engine/headless/headless_test.go` (tests, not implementation)\n- `cmd/functional-test/main.go`, `cmd/tools/crawl-maze-score/main.go` (unrelated entry points)",
+  "reconciliation": {
+    "status": "pending",
+    "summary": "",
+    "files_changed": [],
+    "validation_results": [],
+    "human_decision": "",
+    "override_reason": "",
+    "memory_updates": []
+  }
+}
