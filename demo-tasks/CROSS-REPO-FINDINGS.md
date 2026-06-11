@@ -78,12 +78,37 @@ the quoted error string ("The passwords do not match"); katana's two missing fil
 came back via the depth-scaled content bonus (files mentioning proxy+chrome+headless
 together outrank single-term keyword hits). The demo-task dirs now hold the 0.1.10 WOs.
 
+## 0.1.10 executor re-test (haiku + sonnet, results-0110/)
+
+Same tasks, same pinned bases, corrected WOs. The variable isolated is the Work
+Order's editable_paths (wrong under 0.1.8 → correct under 0.1.10).
+
+| repo | model | 0.1.8 outcome | 0.1.10 outcome | sembl validate |
+|------|-------|---------------|----------------|----------------|
+| katana | haiku | STOP, zero delivery | exact 3-file reference fix | **PASS** |
+| katana | sonnet | (was gpt-5.5 STOP) | exact 3-file reference fix | **PASS** |
+| fastapi | haiku | symptom fix (root cause unreachable) | **root-cause fix in utils.ts** + 1 adjacent call-site | FAIL (1 out-of-scope, caught) |
+
+Headline: **a wrong Work Order made a weak model STOP; the corrected Work Order made
+the same-or-weaker model deliver the human reference fix.** The only thing that changed
+was scope correctness. `sembl validate` worked both ways — PASS on the clean fixes,
+FAIL on the qwen fabricated report (0 files changed, fabricated claims named) and on
+haiku's one fastapi over-reach (`ChangePassword.tsx`, in files_to_inspect but not
+editable_paths).
+
+Residual schema notes from the re-test (candidates for 0.1.11):
+- When the true fix is a shared utility, its call sites likely belong in
+  editable_paths too (haiku's fastapi over-reach was a justified call-site update the
+  ranker surfaced for inspection but didn't promote to editable).
+- Lock-7's stop-clause relies on executor self-restraint; the fastapi over-reach
+  argues for validate-in-the-loop as the real backstop, not the prompt alone.
+
 ## Status
 
-- Localization gate: **PASSED 4/4.** Next: re-run sembl executor arms (haiku → sonnet,
-  then opus per owner gate) against the corrected WOs — expectation is the katana and
-  chatbot-ui STOPs convert to in-scope fixes, and `sembl validate` confirms scope.
-- fable runs: still ON HOLD until the executor re-test confirms the corrected WOs
-  produce in-scope fixes (owner decision).
+- Localization gate: **PASSED 4/4.** Executor re-test: **PASSED** at haiku + sonnet
+  (in-scope reference fixes where 0.1.8 produced STOPs / symptom fixes).
+- **Opus tier: owner's gate** — haiku + sonnet both pass, so opus is the go/no-go the
+  owner reserved before moving to bigger/harder repos and re-running everything.
+- fable runs: still ON HOLD until the bigger-repo round per the owner's plan.
 - Toolchain validation unavailable for katana (no Go) and the two TS repos (heavy
   installs); those tasks are scope-metric tasks by design of this fast pass.
