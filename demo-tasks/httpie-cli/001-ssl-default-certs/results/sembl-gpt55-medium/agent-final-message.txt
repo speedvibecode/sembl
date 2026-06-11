@@ -1,0 +1,24 @@
+{
+  "changes": [
+    "httpie/client.py: use the default Requests-compatible HTTPS adapter for ordinary HTTPS requests so Requests 2.32.3+ handles CA loading; keep HTTPie's custom TLS adapter only for --ssl, --ciphers, or encrypted client-key use."
+  ],
+  "validation": {
+    "commands": [
+      ".venv\\Scripts\\python.exe -m pytest tests/test_ssl.py -q"
+    ],
+    "results": [
+      "not run: shell process failed to start with `windows sandbox: spawn setup refresh` on three attempts"
+    ]
+  },
+  "tests": {
+    "added": [],
+    "updated": []
+  },
+  "manual_checks": [
+    "Inspected requested SSL/request path files and tests before editing.",
+    "Checked Requests 2.32.x release history: https://requests.readthedocs.io/en/latest/community/updates/#release-history"
+  ],
+  "risks": [
+    "Pytest validation is blocked by the sandbox startup failure, so test pass/fail is not confirmed in this turn."
+  ]
+}

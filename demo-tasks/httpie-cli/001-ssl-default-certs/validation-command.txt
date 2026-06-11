@@ -1,0 +1,1 @@
+.venv\Scripts\python.exe -m pytest tests/test_ssl.py -q

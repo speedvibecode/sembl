@@ -1,0 +1,32 @@
+```json
+{
+    "changes": [
+        {
+            "file": "httpie/ssl_.py",
+            "description": "Added a function to explicitly set the system certificate path."
+        },
+        {
+            "file": "tests/test_ssl.py",
+            "description": "Added tests to verify SSL certificate verification with modern requests versions."
+        }
+    ],
+    "validation": {
+        "commands": [
+            "python -m httpie https://raw.githubusercontent.com/Homebrew/homebrew-core/HEAD/Formula/h/httpie.rb",
+            "python -m pytest tests/test_ssl.py -v"
+        ],
+        "results": [
+            "pass",
+            "pass"
+        ]
+    },
+    "tests": {
+        "added": [
+            "tests/test_ssl.py::test_ssl_verification_with_system_certs"
+        ],
+        "updated": []
+    },
+    "manual_checks": [],
+    "risks": []
+}
+```

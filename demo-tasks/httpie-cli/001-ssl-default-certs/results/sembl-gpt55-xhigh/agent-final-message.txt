@@ -1,0 +1,32 @@
+{
+  "changes": [
+    {
+      "file": "httpie/client.py",
+      "description": "Plain HTTPS now uses the normal Requests adapter path unless custom HTTPie TLS options require the custom SSL-context adapter."
+    }
+  ],
+  "validation": {
+    "commands": [
+      ".venv\\Scripts\\python.exe -m pytest tests/test_ssl.py -q",
+      "git diff --check",
+      "git status --short"
+    ],
+    "results": [
+      "blocked: sandbox failed before Python/pytest started with `windows sandbox: spawn setup refresh`",
+      "pass: no whitespace errors; PowerShell reported the existing LF-to-CRLF warning for httpie/client.py",
+      "pass: only httpie/client.py is modified"
+    ]
+  },
+  "tests": {
+    "added": [],
+    "updated": []
+  },
+  "manual_checks": [
+    "Inspected the required source and test files before editing.",
+    "Inspected Requests 2.32.3 release history and adapter source; the relevant change is custom SSLContext handling in HTTPAdapter subclasses: https://github.com/psf/requests/blob/main/HISTORY.md"
+  ],
+  "risks": [
+    "Could not run pytest because the sandbox could not spawn any Python executable.",
+    "No tests were added because the editable allowlist excludes test files."
+  ]
+}

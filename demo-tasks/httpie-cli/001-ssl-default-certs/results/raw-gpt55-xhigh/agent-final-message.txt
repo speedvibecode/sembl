@@ -1,0 +1,7 @@
+1. Loaded requests’ default CA bundle into HTTPie’s custom HTTPS SSL context when `verify=True`, preserving custom CA bundle handling.
+
+2. Modified files: `httpie/ssl_.py`, `tests/test_ssl.py`
+
+3. Validation: attempted `.venv\Scripts\python.exe -m pytest tests/test_ssl.py -q`, but the shell runner failed before pytest started with `windows sandbox: spawn setup refresh`.
+
+4. Blockers: pytest validation was blocked by the sandbox process-start failure; implementation changes are otherwise complete. Reference checked: https://raw.githubusercontent.com/psf/requests/v2.32.3/src/requests/adapters.py
