@@ -1,7 +1,7 @@
-# Work Order - wo-fastapitempl-1781196074-in-the-dashboard-resetting-a-password-is
+# Work Order - wo-fastapitempl-1781197070-in-the-dashboard-resetting-a-password-is
 
 **Repo:** `fastapi-template` | **Branch:** `pinned-base` | **Risk:** `MEDIUM`
-**Created:** 2026-06-11T16:41:14.905002+00:00
+**Created:** 2026-06-11T16:57:50.968761+00:00
 **Task type:** `bugfix`
 
 ---
@@ -11,7 +11,7 @@
 **Original request:**
 > in the dashboard, resetting a password is broken - i open the reset password page, type the same password in both fields and it always errors with 'The passwords do not match' even though they are literally identical. so nobody can ever complete a password reset. signup/login still work fine. please fix the reset password flow.
 
-**Clarified goal:** Fix the frontend password reset form validation logic to correctly compare the two password fields and allow submission when they match
+**Clarified goal:** Fix the password reset form validation logic to correctly compare the two password fields and allow submission when they match
 
 **User-visible outcome:** Users can successfully reset their password by entering the same password in both fields without receiving a false 'passwords do not match' error
 
@@ -19,24 +19,23 @@
 
 **Non-goals:**
 
-- Modify signup or login flows
-- Change backend password reset API logic
-- Update password hashing or security policies
-- Alter UI styling or layout of the reset page
+- Modify signup or login flows (they work fine and must remain unchanged)
+- Change password hashing or storage logic
+- Alter the UI design of the reset password page
+- Modify backend API endpoints for password reset
 
 **Must not change:**
 
-- Existing signup/login functionality
-- Backend API contracts for password reset
-- Password validation rules (length, complexity, etc.)
-- Error messages for other validation cases
+- Existing signup/login validation logic
+- Password hashing/encryption behavior
+- Backend API contracts for auth flows
+- UI styling or layout of the reset password page
 
 **Forbidden areas (agent must not touch):**
 
-- frontend/src/api/
-- frontend/src/lib/auth.ts
 - frontend/biome.json
 - frontend/package.json
+- backend/app/backend_pre_start.py
 
 ## 3. Scope Lock
 
@@ -67,7 +66,8 @@
 
 **Read-only context (inspect, do not modify):**
 
-- backend/app/core/security.py
+- frontend/biome.json
+- frontend/package.json
 - README.md
 - frontend/src/client/core/types.ts
 
@@ -102,43 +102,43 @@
 **Architecture notes:**
 
 - Frontend uses React + TypeScript + Chakra UI
-- Password reset is likely a frontend-only validation issue
-- Backend API for password reset should remain untouched
-- Form validation may use React Hook Form or custom hooks
+- Password reset is likely a frontend-only validation issue (since signup/login work)
+- Shared validation logic between auth flows may exist - ensure changes are isolated to reset flow
+- Backend auth endpoints are in FastAPI (Python) - do not modify unless frontend inspection reveals API issues
 
 ## 5. Success Lock
 
 **Acceptance criteria:**
 
-1. Password reset form accepts submission when both password fields contain identical values
-2. Password reset form still rejects submission when password fields differ
-3. All other validation rules (length, complexity) remain enforced
-4. No console errors or unhandled exceptions during form interaction
-5. Existing tests for password reset (if any) continue to pass
+1. Entering identical passwords in both fields of the reset password form submits successfully
+2. Entering different passwords in the fields shows the 'passwords do not match' error
+3. All existing auth flows (signup, login) continue to work as before
+4. No new errors appear in the browser console during password reset
+5. The form validation triggers in real-time as the user types (if it did before)
 
 **Regressions to preserve:**
 
-- Signup flow continues to work
-- Login flow continues to work
-- Password reset API endpoint remains unchanged
-- Other form validations (e.g., required fields) still work
+- Signup flow validation remains unchanged
+- Login flow validation remains unchanged
+- Password hashing behavior remains identical
+- Error messages for truly mismatched passwords still appear
+- Form submission behavior for valid inputs remains consistent
 
 ## 6. Proof Lock
 
-**Validation commands:**
-
-- `curl -s http://localhost:8000/docs | grep -i 'reset.*password' | head -5`
+**Validation commands:** _none identified_
 
 **Tests to add or update:**
 
-- frontend/src/components/__tests__/ResetPasswordForm.test.tsx
-- frontend/src/hooks/__tests__/useResetPassword.test.ts
+- frontend/src/tests/components/ResetPasswordForm.test.tsx (if missing, add test for matching password case)
+- frontend/src/tests/utils/passwordValidation.test.ts (if missing, add test for reset flow validation)
 
 **Manual checks:**
 
-1. Open password reset page in browser, enter matching passwords, verify submission succeeds
-2. Enter non-matching passwords, verify error message appears
-3. Test edge cases: empty fields, whitespace-only passwords, very long passwords
+1. Manually test the reset password flow in a browser with matching passwords
+2. Verify that different passwords still trigger the error
+3. Check that the success path (e.g., redirect or confirmation message) works after fix
+4. Test edge cases: empty fields, very long passwords, special characters
 
 ## 7. Safety Lock
 
@@ -146,23 +146,24 @@
 
 **Risk reasons:**
 
-- Frontend-only bug but affects critical user flow (password reset)
-- Potential for hidden coupling with other auth forms (signup/login)
-- Graph data is thin-no direct nodes for reset password logic, increasing risk of undetected dependencies
+- Auth-related functionality (high sensitivity)
+- Potential for shared validation logic with working flows (signup/login)
+- User-facing bug with direct impact on core functionality
+- Frontend-only issue reduces backend risk but increases UI regression risk
 
 **Stop conditions (agent must halt and ask human):**
 
-- Cannot locate the password reset form component after inspecting likely_affected_areas
-- Password validation logic is shared with signup/login flows (risk of regression)
-- Backend API changes are required to fix the issue
-- The bug is in a third-party library (e.g., React Hook Form) rather than custom code
+- If the password comparison logic is in a shared utility used by signup/login (which work fine), stop and ask human before modifying
+- If the issue appears to be in backend validation (unlikely per task description), stop and ask human
+- If multiple files contain similar password validation logic and it's unclear which one is used by reset flow, stop and ask human
+- If the fix requires changing a public API contract, stop and ask human
 - If the correct fix requires editing a file outside editable_paths, stop and report which file and why instead of proceeding or expanding scope.
 
 **Approval triggers (blocks merge):**
 
-- Changes touch shared authentication state management
-- Modifications required in backend password reset endpoint
-- Test failures in existing password-related tests after the fix
+- Any changes to shared validation utilities used by signup/login
+- Any modifications to backend auth endpoints
+- Any changes to password hashing logic
 
 ## 8. Executor Packet
 
@@ -170,12 +171,13 @@ _See `executor-prompt.md` for the agent-ready prompt._
 
 **Patch expectations:**
 
-- Minimal diff touching only the password comparison logic in the reset password form
-- No changes to backend or API client code
-- Preservation of all other validation rules
-- New or updated tests for the password reset form
+- A minimal change to a single validation function or comparison operation
+- No changes to files outside the reset password flow unless proven necessary
+- No changes to backend code
+- No changes to shared utilities unless approved by human
+- Updated or new tests for the reset password validation
 
-**Reporting format:** JSON with keys: { files_modified: [], root_cause: '', acceptance_criteria_met: boolean, tests_added: [], manual_verification_notes: '' }
+**Reporting format:** {'summary': 'One-line description of the fix', 'root_cause': 'Technical explanation of why the bug occurred', 'changes': [{'file': 'path/to/file', 'before': 'original code snippet', 'after': 'fixed code snippet', 'reason': 'why this fixes the issue'}], 'validation': {'automated': ['list of test commands run and their results'], 'manual': ['list of manual checks performed and outcomes'], 'regression': ['confirmation that signup/login still work']}, 'risk_assessment': 'low/medium/high with justification'}
 
 ---
 
