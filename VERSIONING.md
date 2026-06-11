@@ -20,10 +20,11 @@ commit/PR**, across **all** of these:
 `release.yml` **fails the publish** unless tag == pyproject == `__init__` (one fewer
 thing to get wrong; you cannot ship an inconsistent package).
 
-**Site (sembl-site repo) — 3 spots:**
+**Site (sembl-site repo) — 4 spots:**
 3. `changelog.html` → a new top entry for the version
 4. `index.html` → the hero terminal `Successfully installed sembl X.Y.Z`
 5. `docs.html` → the "latest stable release (X.Y.Z)" callout
+6. `main.js` → the animated hero-terminal step `Successfully installed sembl X.Y.Z`
 
 Never push a functional change that leaves these out of sync. Pure documentation or
 internal refactors that don't change behavior do not require a bump, but if in doubt,

@@ -283,7 +283,7 @@ def _probe_crg(p: RepoProbe, root: Path, task: str):
         crg_common_args = _crg_common_args(root)
         crg_env = _crg_env(root)
         status = _run_optional([crg, "status", *crg_common_args], root, timeout=15, env=crg_env)
-        if status.returncode != 0:
+        if status.returncode != 0 or _crg_status_is_empty(status.stdout):
             build = _run_optional([crg, "build", *crg_common_args], root, timeout=180, env=crg_env)
             if build.returncode != 0:
                 return
@@ -313,6 +313,23 @@ def _probe_crg(p: RepoProbe, root: Path, task: str):
 
     except (FileNotFoundError, subprocess.TimeoutExpired, Exception):
         p.crg_available = False
+
+
+def _crg_status_is_empty(stdout: str) -> bool:
+    """CRG 2.3.5 `status` exits 0 even when the graph DB is absent or empty,
+    so an empty graph must be detected from the output to trigger a build."""
+    for line in stdout.splitlines():
+        ll = line.lower()
+        if "last updated:" in ll and "never" in ll:
+            return True
+        if "nodes:" in ll:
+            try:
+                count = int("".join(filter(str.isdigit, line.split(":")[-1].split(",")[0])))
+            except ValueError:
+                continue
+            if count == 0:
+                return True
+    return False
 
 
 def _task_keywords(task: str) -> list[str]:
