@@ -88,6 +88,30 @@ Sembl is early but usable for testing. The current CLI supports:
 - OpenAI, Anthropic, Gemini, NVIDIA NIM, OpenRouter, and local Ollama providers
 - work-order output as Markdown, JSON, executor prompt, validation plan, and graph-impact analysis
 
+## Proof
+
+Sembl is tested against real, popular open-source repos - not toy apps. Each task
+is pinned to a commit and taken from a real closed issue that already has a known
+human fix, so the Work Order's scope can be checked against the file a maintainer
+actually changed. Every Work Order, diff, and validation run is in
+[`demo-tasks/`](demo-tasks/).
+
+| Repo | Stack | Task (from a real issue) | Work Order scoped to | Matches human fix |
+|------|-------|--------------------------|----------------------|-------------------|
+| [httpie/cli](https://github.com/httpie/cli) | Python CLI | HTTPS broke after `requests` 2.32.3 | `httpie/ssl_.py` | yes (1/1) |
+| [projectdiscovery/katana](https://github.com/projectdiscovery/katana) | Go crawler | `-headless-options` ignored since v1.4.0 | 3 headless-engine files | yes (3/3) |
+| [FastAPI full-stack template](https://github.com/fastapi/full-stack-fastapi-template) | Py + TS | password reset always "passwords do not match" | `frontend/src/utils.ts` | yes (1/1) |
+| [mckaywrigley/chatbot-ui](https://github.com/mckaywrigley/chatbot-ui) | TS / Next | Claude responses cut off | `app/api/chat/anthropic/route.ts` | yes (1/1) |
+
+Across all four, the Work Order's editable scope named the exact file a human
+changed. On the katana regression, three different agents (Haiku, Sonnet, Opus)
+each produced the maintainer's reference fix touching only the right files, and
+`sembl validate` confirmed every in-scope fix - while flagging an out-of-scope
+edit for review and catching a model that returned a success report for changes
+it never made. One valid solution exists per task; scope is measured before
+execution. Full method and per-run notes:
+[`demo-tasks/CROSS-REPO-FINDINGS.md`](demo-tasks/CROSS-REPO-FINDINGS.md).
+
 ## Install
 
 Sembl is published on PyPI: https://pypi.org/project/sembl/
@@ -219,7 +243,18 @@ sembl show --file executor-prompt
 
 # Show the graph-impact analysis (when graph context was available)
 sembl show --file graph-impact
+
+# After the agent runs: check its diff against the Work Order scope
+sembl validate
+
+# Cross-check an executor's report for fabricated claims
+sembl validate --report agent-report.json
 ```
+
+`sembl validate` compares the repository's actual git changes against the latest
+Work Order's editable paths and forbidden areas, and (with `--report`) flags any
+files the executor claimed to change but did not. It never trusts an agent's
+self-report.
 
 ## Output
 
