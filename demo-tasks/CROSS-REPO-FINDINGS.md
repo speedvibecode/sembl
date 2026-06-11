@@ -87,7 +87,9 @@ Order's editable_paths (wrong under 0.1.8 → correct under 0.1.10).
 |------|-------|---------------|----------------|----------------|
 | katana | haiku | STOP, zero delivery | exact 3-file reference fix | **PASS** |
 | katana | sonnet | (was gpt-5.5 STOP) | exact 3-file reference fix | **PASS** |
-| fastapi | haiku | symptom fix (root cause unreachable) | **root-cause fix in utils.ts** + 1 adjacent call-site | FAIL (1 out-of-scope, caught) |
+| katana | opus | (was gpt-5.5 STOP) | exact 3-file reference fix (found old hybrid engine as ground truth) | **PASS** |
+| fastapi | haiku | symptom fix (root cause unreachable) | root-cause fix in utils.ts + 1 adjacent call-site | FAIL (1 out-of-scope, caught) |
+| fastapi | opus | (was symptom fix) | **1 file, 1 line — minimal root-cause fix**, deliberately avoided haiku's over-reach | **PASS** |
 
 Headline: **a wrong Work Order made a weak model STOP; the corrected Work Order made
 the same-or-weaker model deliver the human reference fix.** The only thing that changed
@@ -105,10 +107,21 @@ Residual schema notes from the re-test (candidates for 0.1.11):
 
 ## Status
 
-- Localization gate: **PASSED 4/4.** Executor re-test: **PASSED** at haiku + sonnet
-  (in-scope reference fixes where 0.1.8 produced STOPs / symptom fixes).
-- **Opus tier: owner's gate** — haiku + sonnet both pass, so opus is the go/no-go the
-  owner reserved before moving to bigger/harder repos and re-running everything.
-- fable runs: still ON HOLD until the bigger-repo round per the owner's plan.
+- Localization gate: **PASSED 4/4.**
+- Executor re-test: **PASSED at all three tiers (haiku, sonnet, opus).** Every tier
+  delivers the in-scope reference fix on the katana task that previously STOPped; opus
+  also produced the single tightest fix on fastapi (1 file / 1 line) and avoided the
+  over-reach haiku made — confirming that with a CORRECT contract, model strength now
+  translates into better-scoped fixes (the inverse of the 0.1.8 pattern, where stronger
+  models faithfully executed the WRONG contract into worse output).
+- `sembl validate` exercised across the re-test: PASS on every clean fix, FAIL on the
+  qwen fabricated report and on haiku's one fastapi over-reach — working as the
+  scope/integrity backstop in both directions.
+- **Next per owner plan: bigger / harder repos, then re-run the whole loop, then the
+  fable tier.** fable still ON HOLD until that round.
+- Residual 0.1.11 candidates (from the re-test): promote shared-utility call sites into
+  editable_paths; treat validate-in-the-loop as the real scope backstop rather than
+  executor self-restraint (haiku's over-reach passed the prompt's stop-clause but
+  validate caught it).
 - Toolchain validation unavailable for katana (no Go) and the two TS repos (heavy
   installs); those tasks are scope-metric tasks by design of this fast pass.
