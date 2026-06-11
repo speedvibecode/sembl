@@ -89,8 +89,12 @@ def _git_changed_files(root: Path) -> list:
         path = line[3:].strip().strip('"')
         if " -> " in path:  # renames: take the new side
             path = path.split(" -> ", 1)[1].strip().strip('"')
+        path = _norm(path)
+        # Sembl's own output and graph artifacts are not executor work.
+        if path == ".sembl" or path.startswith((".sembl/", "graphify-out/")):
+            continue
         if path:
-            files.append(_norm(path))
+            files.append(path)
     return sorted(set(files))
 
 
@@ -128,7 +132,10 @@ def load_report(path: str) -> dict:
 
 
 def _norm(path: str) -> str:
-    return str(path).strip().replace("\\", "/").lstrip("./").rstrip("/")
+    path = str(path).strip().replace("\\", "/")
+    while path.startswith("./"):
+        path = path[2:]
+    return path.rstrip("/")
 
 
 def _matches_any(path: str, entries: list) -> bool:

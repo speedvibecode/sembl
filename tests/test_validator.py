@@ -104,6 +104,17 @@ def test_unreported_changes_are_flagged_but_not_fatal(git_repo):
     assert result.ok  # in-scope work that wasn't claimed is suspicious, not fatal
 
 
+def test_sembl_output_dir_is_ignored(git_repo):
+    sembl_dir = git_repo / ".sembl" / "work-orders" / "wo-x"
+    sembl_dir.mkdir(parents=True)
+    (sembl_dir / "work-order.json").write_text("{}", encoding="utf-8")
+    (git_repo / "graphify-out").mkdir()
+    (git_repo / "graphify-out" / "graph.json").write_text("{}", encoding="utf-8")
+    result = validate_against_work_order(str(git_repo), WO)
+    assert result.changed_files == []
+    assert result.ok
+
+
 def test_load_report_tolerates_json_fence(tmp_path):
     path = tmp_path / "report.txt"
     path.write_text('```json\n{"files_modified": ["a.py"]}\n```', encoding="utf-8")
