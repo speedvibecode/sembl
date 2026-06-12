@@ -859,6 +859,25 @@ def _ground_work_order_in_repo(wo: WorkOrder, probe: RepoProbe):
     _refresh_executor_prompt_from_grounded_fields(wo)
 
 
+def _asserts_narrower_file_scope(text: str) -> bool:
+    """True when free text pins scope to a SPECIFIC named file/dir.
+
+    Phrases like "changes only in foo.ts" or "stop if changes are needed outside
+    foo.ts" assert a boundary narrower than the grounded editable_paths. Since
+    editable_paths is the authoritative scope, such claims create contradictions
+    (and false stops). The canonical Lock-7 condition references the field name
+    "editable_paths" (no file extension), so it is not matched here.
+    """
+    low = str(text).lower()
+    if not any(k in low for k in (
+        "outside", "only in", "only edit", "only modify", "only touch",
+        "limited to", "changes only", "restricted to", "confined to",
+    )):
+        return False
+    # A concrete file reference (name.ext) marks the narrower-than-editable boundary.
+    return bool(re.search(r"[\w./\\-]+\.[a-z]{1,5}\b", low))
+
+
 def _reconcile_contract(wo: WorkOrder, root: Path, ignored: set[str] | None = None):
     """Deterministic contract-consistency repair (no LLM).
 
@@ -909,17 +928,28 @@ def _reconcile_contract(wo: WorkOrder, root: Path, ignored: set[str] | None = No
             token for token in _extract_path_like_tokens(text)
             if _path_exists(root, token)
         ]
-        if any(
+        names_outside = any(
             token not in editable_set and not _looks_like_test_path(token)
             for token in tokens
-        ):
+        )
+        if names_outside or _asserts_narrower_file_scope(text):
             continue
         consistent.append(text)
     if not consistent and editable:
         consistent.append("Keep implementation changes within the grounded editable paths.")
     wo.patch_expectations = consistent
 
-    # 4. Lock 7: permission to stop. Converts silent out-of-scope edits (weak
+    # 4. Drop LLM stop-conditions that assert a file-specific scope NARROWER than
+    #    editable_paths (e.g. "stop if the fix needs changes outside schemas.ts").
+    #    editable_paths is the authoritative boundary; a narrower named-file boundary
+    #    causes a FALSE stop when the real fix file — correctly in editable_paths —
+    #    happens to sit outside that subset (zod: util.ts vs the LLM's schemas.ts).
+    wo.stop_conditions = [
+        c for c in (wo.stop_conditions or [])
+        if not _asserts_narrower_file_scope(str(c))
+    ]
+
+    # 5. Lock 7: permission to stop. Converts silent out-of-scope edits (weak
     #    executors) and dead-end tunneling (strong executors) into a report.
     if wo.editable_paths:
         _append_unique(
@@ -1412,6 +1442,14 @@ def _is_editable_candidate(path: str, task: str) -> bool:
         return bool(task_terms & config_terms)
     if lower.startswith(("docs/", "system design/", "ai system docs/", "stitch_ui_frontend_design/")):
         return False
+    # Locale / i18n files match broad task keywords (every locale repeats the same
+    # message vocabulary) but are almost never where a behavior bug lives — unless
+    # the task is itself about localization. Same gate-by-intent logic as types/config.
+    if {"locales", "locale", "i18n", "intl", "lang", "langs", "translations", "translation"} & set(lower.split("/")):
+        return bool(task_terms & {
+            "locale", "locales", "i18n", "intl", "lang", "language", "languages",
+            "translation", "translations", "message", "messages",
+        })
     return True
 
 

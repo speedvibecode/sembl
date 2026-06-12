@@ -196,3 +196,40 @@ def test_validation_commands_capped_on_large_monorepo(tmp_path):
     assert len(out) <= 10
     # the few that survive are the head (top-ranked) test files, not all 170
     assert sum(1 for c in out if c.startswith("npm test --")) <= 3
+
+
+# ── precision: locale exclusion + narrowing-scope filter (zod loop) ──────────
+
+def test_locale_files_excluded_unless_localization_task():
+    from sembl.generator import _is_editable_candidate
+    loc = "packages/zod/src/v4/locales/he.ts"
+    core = "packages/zod/src/v4/core/util.ts"
+    # non-localization task: locale file is NOT an editable candidate, core is
+    assert not _is_editable_candidate(loc, "map and set defaults share state")
+    assert _is_editable_candidate(core, "map and set defaults share state")
+    # localization task: locale file IS allowed
+    assert _is_editable_candidate(loc, "fix the hebrew translation message")
+
+
+def test_narrowing_scope_stop_condition_dropped(tmp_path):
+    # zod reproduction: LLM emitted "stop if changes are needed outside schemas.ts"
+    # while the real fix (util.ts) is in editable_paths -> false-stop risk.
+    (tmp_path / "schemas.ts").write_text("export const x = 1", encoding="utf-8")
+    (tmp_path / "util.ts").write_text("export const y = 2", encoding="utf-8")
+    wo = _wo(
+        editable_paths=["util.ts", "schemas.ts"],
+        stop_conditions=[
+            "If the fix requires changes outside schemas.ts, stop and ask",
+            "If type inference breaks, stop and ask",
+        ],
+        patch_expectations=["Changes only in schemas.ts", "Keep the diff minimal"],
+    )
+    _reconcile_contract(wo, tmp_path)
+    # the narrowing file-specific stop condition is gone; the generic one stays
+    assert not any("outside schemas.ts" in c for c in wo.stop_conditions)
+    assert any("type inference" in c for c in wo.stop_conditions)
+    # the canonical Lock-7 boundary survives
+    assert any("outside editable_paths" in c for c in wo.stop_conditions)
+    # the contradictory "only in schemas.ts" patch expectation is dropped
+    assert not any("only in schemas.ts" in p.lower() for p in wo.patch_expectations)
+    assert any("minimal" in p.lower() for p in wo.patch_expectations)
