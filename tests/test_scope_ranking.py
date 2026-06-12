@@ -429,3 +429,21 @@ def test_narrowing_scope_stop_condition_dropped(tmp_path):
     # the contradictory "only in schemas.ts" patch expectation is dropped
     assert not any("only in schemas.ts" in p.lower() for p in wo.patch_expectations)
     assert any("minimal" in p.lower() for p in wo.patch_expectations)
+
+
+def test_directory_shaped_narrowing_stop_condition_dropped(tmp_path):
+    # zod-001 0.1.11 WO repro: "outside packages/zod/src/v4/classic/schemas/"
+    # is a dir-shaped boundary narrower than editable_paths (the true fix,
+    # v4/core/util.ts, is editable but outside it) -> false-stop risk.
+    wo = _wo(
+        editable_paths=["packages/zod/src/v4/core/util.ts"],
+        stop_conditions=[
+            "If the fix requires changes outside packages/zod/src/v4/classic/schemas/",
+            "If type inference breaks, stop and ask",
+        ],
+    )
+    _reconcile_contract(wo, tmp_path)
+    assert not any("classic/schemas" in c for c in wo.stop_conditions)
+    assert any("type inference" in c for c in wo.stop_conditions)
+    # canonical Lock-7 ("outside editable_paths", no slash) is appended, not dropped
+    assert any("outside editable_paths" in c for c in wo.stop_conditions)

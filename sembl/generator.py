@@ -936,7 +936,12 @@ def _asserts_narrower_file_scope(text: str) -> bool:
     )):
         return False
     # A concrete file reference (name.ext) marks the narrower-than-editable boundary.
-    return bool(re.search(r"[\w./\\-]+\.[a-z]{1,5}\b", low))
+    if re.search(r"[\w./\\-]+\.[a-z]{1,5}\b", low):
+        return True
+    # So does a concrete DIRECTORY path ("outside packages/zod/src/v4/classic/
+    # schemas/"): same false-stop mechanics, just a dir-shaped boundary. The
+    # canonical Lock-7 text says "outside editable_paths" — no slash, unmatched.
+    return bool(re.search(r"\b[\w.-]+(?:/[\w.-]+)+/?", low))
 
 
 def _reconcile_contract(wo: WorkOrder, root: Path, ignored: set[str] | None = None):
