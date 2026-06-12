@@ -17,6 +17,8 @@ from sembl.generator import (
     _looks_like_test_path,
     _rank_editable_paths,
     _reconcile_contract,
+    _relevance_gap_cutoff,
+    _superseded_version_paths,
 )
 
 
@@ -54,6 +56,7 @@ def test_entry_point_penalty_targets_launchers_packaging_and_config():
     assert _entry_point_penalty("cmd/functional-test/main.go") >= 6
     assert _entry_point_penalty("extras/scripts/generate_man_pages.py") >= 6
     assert _entry_point_penalty("frontend/biome.json") >= 6
+    assert _entry_point_penalty("packages/docs/components/ecosystem.tsx") >= 6
     assert _entry_point_penalty("httpie/ssl_.py") == 0
     assert _entry_point_penalty("pkg/engine/headless/browser/browser.go") == 0
 
@@ -73,6 +76,24 @@ def test_failure_trace_signals_extract_quotes_and_error_tokens():
     )
     assert "CERTIFICATE_VERIFY_FAILED" in signals
     assert "unable to get local issuer" in signals
+
+
+def test_failure_trace_signals_survive_hard_wrapped_tasks(tmp_path):
+    # fastapi-001 live repro: raw-prompt.md hard-wraps the quoted error mid-
+    # phrase ("The passwords do not\nmatch") -> literal search missed utils.ts
+    # and the WO lost its trace anchor entirely.
+    signals = _failure_trace_signals(
+        'always errors with "The passwords do not\nmatch" even though identical'
+    )
+    assert "The passwords do not match" in signals
+    target = tmp_path / "src"
+    target.mkdir()
+    (target / "utils.ts").write_text(
+        'value === getValues().password || "The passwords do not match",',
+        encoding="utf-8",
+    )
+    hits = _failure_trace_files(tmp_path, ["src/utils.ts"], signals)
+    assert hits == {"src/utils.ts"}
 
 
 def test_failure_trace_files_matches_content(tmp_path):
@@ -209,6 +230,181 @@ def test_locale_files_excluded_unless_localization_task():
     assert _is_editable_candidate(core, "map and set defaults share state")
     # localization task: locale file IS allowed
     assert _is_editable_candidate(loc, "fix the hebrew translation message")
+
+
+# ── relevance-gap cutoff (zod-001 matrix: scope noise loosens tight models) ──
+
+def test_trace_hit_head_drops_keyword_only_tail():
+    # zod-001 shape: v4 fix file is a trace hit; v3 siblings only keyword-match.
+    task = 'Map/Set schema defaults share state, error "invalid_type" on clone'
+    ranked = [
+        "packages/zod/src/v4/core/util.ts",       # trace hit + content
+        "packages/zod/src/v4/core/schemas.ts",     # strong content
+        "packages/zod/src/v3/types.ts",            # weak keyword tail
+        "packages/zod/src/v3/helpers/util.ts",     # weak keyword tail
+    ]
+    out = _relevance_gap_cutoff(
+        ranked,
+        task,
+        trace_hits={"packages/zod/src/v4/core/util.ts"},
+        content_hits={
+            "packages/zod/src/v4/core/util.ts": 6,
+            "packages/zod/src/v4/core/schemas.ts": 6,
+            "packages/zod/src/v3/types.ts": 1,
+            "packages/zod/src/v3/helpers/util.ts": 1,
+        },
+    )
+    assert "packages/zod/src/v4/core/util.ts" in out
+    assert "packages/zod/src/v4/core/schemas.ts" in out
+    assert "packages/zod/src/v3/types.ts" not in out
+    assert "packages/zod/src/v3/helpers/util.ts" not in out
+
+
+def test_no_strong_head_passes_through_unchanged():
+    # katana shape: weak keyword signal everywhere -> breadth is the safe default.
+    ranked = [
+        "pkg/engine/headless/browser.go",
+        "pkg/engine/standard/standard.go",
+        "pkg/utils/queue/queue.go",
+    ]
+    out = _relevance_gap_cutoff(ranked, task="crawler hangs sometimes")
+    assert out == ranked
+
+
+def test_trace_hits_survive_below_threshold():
+    # A second trace hit (e.g. the test asserting the error string) is never cut,
+    # even when penalties push its score under the fraction.
+    task = 'fails with "unable to get local issuer certificate"'
+    ranked = [
+        "httpie/ssl_.py",
+        "extras/scripts/check_certs.py",  # trace hit but entry-point-penalized
+        "httpie/core.py",
+    ]
+    out = _relevance_gap_cutoff(
+        ranked,
+        task,
+        trace_hits={"httpie/ssl_.py", "extras/scripts/check_certs.py"},
+        content_hits={"httpie/ssl_.py": 5},
+    )
+    assert "extras/scripts/check_certs.py" in out
+    assert "httpie/core.py" not in out
+
+
+def test_strong_content_head_without_trace_hit_still_cuts():
+    # httpie shape: no quoted trace, but the fix file content-matches many terms.
+    task = "https requests fail certificate verify since requests 2.32.3 ssl context"
+    ranked = [
+        "httpie/ssl_.py",     # many content terms + path term
+        "httpie/client.py",   # moderate
+        "docs/config.md",     # noise
+    ]
+    out = _relevance_gap_cutoff(
+        ranked,
+        task,
+        content_hits={"httpie/ssl_.py": 7, "httpie/client.py": 4},
+    )
+    assert out[0] == "httpie/ssl_.py"
+    assert "docs/config.md" not in out
+
+
+def test_cutoff_preserves_graph_floor():
+    # Keyword-strong head must not evict the last graph-provenance path:
+    # keyword scores are weak evidence (0.1.7 lesson), so structural context
+    # survives the gap cut.
+    task = "improve the provider api key error message"
+    ranked = [
+        "src/noise/provider_error_message.py",  # keyword-strong head
+        "src/gold/ownership.py",                # zero-keyword graph file
+    ]
+    out = _relevance_gap_cutoff(
+        ranked,
+        task,
+        content_hits={"src/noise/provider_error_message.py": 5},
+        graph_set={"src/gold/ownership.py"},
+    )
+    assert "src/gold/ownership.py" in out
+
+
+def test_cutoff_keeps_single_path_lists_intact():
+    assert _relevance_gap_cutoff(["a.py"], task="anything") == ["a.py"]
+    assert _relevance_gap_cutoff([], task="anything") == []
+
+
+def test_negative_scorers_dropped_even_without_strong_head():
+    # zod-001 live run: packages/tsc/tsconfig.bench.json (score -6) survived
+    # into editable_paths because no strong head existed to trigger the gap.
+    ranked = [
+        "packages/zod/src/v4/core/util.ts",
+        "packages/tsc/tsconfig.bench.json",
+    ]
+    out = _relevance_gap_cutoff(
+        ranked,
+        task="map and set defaults share state across parses",
+        content_hits={"packages/zod/src/v4/core/util.ts": 3},
+    )
+    assert "packages/tsc/tsconfig.bench.json" not in out
+    assert "packages/zod/src/v4/core/util.ts" in out
+
+
+def test_graph_floor_does_not_resurrect_negative_scorers():
+    # zod-001 live run: tsconfig.bench.json was the only graph-provenance path
+    # and the floor re-added it (score -6) after the gap cut it.
+    task = "map and set defaults share state across parses"
+    ranked = [
+        "packages/zod/src/v4/core/util.ts",
+        "packages/tsc/tsconfig.bench.json",
+    ]
+    out = _relevance_gap_cutoff(
+        ranked,
+        task,
+        content_hits={"packages/zod/src/v4/core/util.ts": 7},
+        graph_set={"packages/tsc/tsconfig.bench.json"},
+    )
+    assert "packages/tsc/tsconfig.bench.json" not in out
+
+
+# ── superseded version trees + legacy gate ───────────────────────────────────
+
+def test_older_version_tree_leaves_edit_scope():
+    # zod-001: v3 and v4 speak the same vocabulary; structure is the signal.
+    pool = [
+        "packages/zod/src/v3/types.ts",
+        "packages/zod/src/v3/helpers/parseUtil.ts",
+        "packages/zod/src/v4/core/util.ts",
+        "packages/zod/src/v4/core/schemas.ts",
+    ]
+    dropped = _superseded_version_paths(pool, "map/set default shares state")
+    assert dropped == {
+        "packages/zod/src/v3/types.ts",
+        "packages/zod/src/v3/helpers/parseUtil.ts",
+    }
+
+
+def test_version_named_in_task_stays_editable():
+    pool = [
+        "packages/zod/src/v3/types.ts",
+        "packages/zod/src/v4/core/util.ts",
+    ]
+    assert _superseded_version_paths(pool, "backport the fix to v3 types") == set()
+
+
+def test_single_version_tree_is_not_superseded():
+    pool = ["api/v2/handlers.go", "api/v2/router.go"]
+    assert _superseded_version_paths(pool, "fix the handler") == set()
+
+
+def test_version_dirs_at_different_positions_do_not_conflict():
+    # v1 under api/ and v2 under web/ are unrelated trees, not versions of
+    # the same thing.
+    pool = ["api/v1/handlers.go", "web/v2/render.go"]
+    assert _superseded_version_paths(pool, "fix rendering") == set()
+
+
+def test_legacy_tree_gated_by_task_intent():
+    from sembl.generator import _is_editable_candidate
+    legacy = "httpie/legacy/v3_2_0_session_header_format.py"
+    assert not _is_editable_candidate(legacy, "https requests fail since 2.32.3")
+    assert _is_editable_candidate(legacy, "fix the legacy session migration")
 
 
 def test_narrowing_scope_stop_condition_dropped(tmp_path):

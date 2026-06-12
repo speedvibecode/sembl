@@ -837,6 +837,18 @@ def _ground_work_order_in_repo(wo: WorkOrder, probe: RepoProbe):
         if _is_editable_candidate(path, wo.original_request)
     ]
     direct_editable = [path for path in editable_candidates if path not in set(graph_editable)]
+    # Older vN trees leave edit scope when a newer sibling is also a candidate
+    # (zod v3-vs-v4: keyword scores cannot tell them apart); they remain
+    # inspectable context below.
+    superseded = _superseded_version_paths(
+        _dedupe(llm_editable + graph_editable + direct_editable + inspect_editable),
+        wo.original_request,
+    )
+    if superseded:
+        llm_editable = [p for p in llm_editable if p not in superseded]
+        graph_editable = [p for p in graph_editable if p not in superseded]
+        direct_editable = [p for p in direct_editable if p not in superseded]
+        inspect_editable = [p for p in inspect_editable if p not in superseded]
     all_editable_candidates = _dedupe(
         llm_editable + graph_editable + direct_editable + inspect_editable
     )
@@ -853,7 +865,13 @@ def _ground_work_order_in_repo(wo: WorkOrder, probe: RepoProbe):
         trace_hits=trace_hits,
         content_hits=content_hits,
     )
-    wo.editable_paths = _cap_with_graph_floor(ranked_editable, set(graph_editable), cap=8)
+    wo.editable_paths = _relevance_gap_cutoff(
+        _cap_with_graph_floor(ranked_editable, set(graph_editable), cap=8),
+        wo.original_request,
+        trace_hits=trace_hits,
+        content_hits=content_hits,
+        graph_set=set(graph_editable),
+    )
     wo.files_to_inspect = _rank_task_paths(
         _merge_existing_paths(
             _valid_existing_files(wo.files_to_inspect, root, ignored),
@@ -1154,19 +1172,7 @@ def _rank_editable_paths(
     llm_set = set(llm_paths)
 
     def score(path: str) -> tuple[int, int, int, str]:
-        value = _task_path_score(path, task)
-        if path in trace_hits:
-            # A literal failure-trace match (the task's quoted error text found
-            # in this file) is near-certain localization — it must beat any
-            # realistic stack of keyword matches in prettier-named files.
-            value += 25
-        if path in content_hits:
-            # Scaled by how many distinct task terms the file CONTAINS: a file
-            # mentioning proxy+chrome+headless is a far stronger candidate than
-            # one mentioning a single broad term.
-            matched = content_hits[path] if isinstance(content_hits, dict) else 1
-            value += min(3 * matched, 21)
-        value -= _entry_point_penalty(path)
+        value = _editable_relevance_score(path, task, trace_hits, content_hits)
         if path in graph_set:
             provenance = 0
         elif path in llm_set:
@@ -1176,6 +1182,118 @@ def _rank_editable_paths(
         return (-value, provenance, len(path), path)
 
     return sorted(_dedupe(llm_paths + graph_paths + direct_paths), key=score)
+
+
+def _editable_relevance_score(
+    path: str,
+    task: str,
+    trace_hits: set[str] | frozenset = frozenset(),
+    content_hits: dict | set[str] | frozenset = frozenset(),
+) -> int:
+    value = _task_path_score(path, task)
+    if path in trace_hits:
+        # A literal failure-trace match (the task's quoted error text found
+        # in this file) is near-certain localization — it must beat any
+        # realistic stack of keyword matches in prettier-named files.
+        value += 25
+    if path in content_hits:
+        # Scaled by how many distinct task terms the file CONTAINS: a file
+        # mentioning proxy+chrome+headless is a far stronger candidate than
+        # one mentioning a single broad term.
+        matched = content_hits[path] if isinstance(content_hits, dict) else 1
+        value += min(3 * matched, 21)
+    value -= _entry_point_penalty(path)
+    return value
+
+
+_STRONG_HEAD_SCORE = 18
+_GAP_KEEP_FRACTION = 0.5
+
+_VERSION_SEGMENT = re.compile(r"^v(\d+)$")
+
+
+def _superseded_version_paths(paths: list[str], task: str) -> set[str]:
+    """Paths under an older vN directory when a newer sibling exists in the pool.
+
+    Keyword relevance cannot separate zod's v3/ from the v4 fix files — both
+    trees speak the same vocabulary (zod-001: v3/types.ts scored equal to the
+    true fix file). The discriminating signal is structural: when candidates
+    span v3/ and v4/ at the same tree position, the older tree is maintained
+    history, not the live implementation. It leaves EDIT scope (inspect
+    context keeps it) unless the task names that version explicitly.
+    """
+    groups: dict[str, dict[int, set[str]]] = {}
+    for path in paths:
+        segments = path.split("/")
+        for index, segment in enumerate(segments[:-1]):
+            match = _VERSION_SEGMENT.match(segment.lower())
+            if match:
+                key = "/".join(segments[:index])
+                groups.setdefault(key, {}).setdefault(int(match.group(1)), set()).add(path)
+                break
+    task_versions = set(re.findall(r"\bv\d+\b", task.lower()))
+    superseded: set[str] = set()
+    for versions in groups.values():
+        if len(versions) < 2:
+            continue
+        newest = max(versions)
+        for version, version_paths in versions.items():
+            if version != newest and f"v{version}" not in task_versions:
+                superseded |= version_paths
+    return superseded
+
+
+def _relevance_gap_cutoff(
+    ranked: list[str],
+    task: str,
+    trace_hits: set[str] | frozenset = frozenset(),
+    content_hits: dict | set[str] | frozenset = frozenset(),
+    graph_set: set[str] | frozenset = frozenset(),
+) -> list[str]:
+    """Drop the weak long-tail from edit scope when localization is confident.
+
+    The zod-001 executor matrix (6 models, MATRIX-FINDINGS.md) showed scope noise
+    is bidirectional: residual low-relevance paths (v3/* alongside the v4 fix)
+    LOOSENED otherwise-disciplined executors, which took the permission the WO
+    granted. When the head of the ranking is a near-certain hit — a failure-trace
+    match or a strong combined score — paths far below it are noise, not signal,
+    so they are cut. When no strong head exists (weak keyword repos), the list
+    passes through unchanged: breadth is the safe default there — except
+    negative scorers (penalties exceeded every relevance signal: bench configs,
+    launchers), which never belong in edit scope.
+
+    Two survivals are guaranteed: trace hits (near-certain localization) and the
+    graph floor (keyword scores are weak evidence — the 0.1.7 lesson — so the
+    last graph-provenance path is kept even when it scores below the gap).
+    """
+    if len(ranked) < 2:
+        return ranked
+    scores = {
+        path: _editable_relevance_score(path, task, trace_hits, content_hits)
+        for path in ranked
+    }
+    head = scores[ranked[0]]
+    if ranked[0] not in trace_hits and head < _STRONG_HEAD_SCORE:
+        kept = [
+            path for path in ranked
+            if path in trace_hits or scores[path] >= 0
+        ] or ranked[:1]
+    else:
+        threshold = head * _GAP_KEEP_FRACTION
+        kept = [
+            path for path in ranked
+            if path in trace_hits or scores[path] >= threshold
+        ]
+    if graph_set and not any(path in graph_set for path in kept):
+        # Floor protects zero-keyword structural context, not penalty-dominated
+        # junk: a graph-named bench config (score < 0) stays out of edit scope.
+        best_graph = next(
+            (path for path in ranked if path in graph_set and scores[path] >= 0),
+            None,
+        )
+        if best_graph:
+            kept.append(best_graph)
+    return kept
 
 
 def _cap_with_graph_floor(ranked: list[str], graph_set: set[str], cap: int = 8) -> list[str]:
@@ -1200,7 +1318,7 @@ _ENTRY_POINT_NAMES = {
 }
 _ENTRY_POINT_SEGMENTS = {
     "cmd", "scripts", "extras", "examples", "tools", "packaging",
-    "dist", "build", "bin",
+    "dist", "build", "bin", "docs",
 }
 _CONFIG_SUFFIXES = (
     ".json", ".toml", ".cfg", ".ini", ".yaml", ".yml", ".lock",
@@ -1235,6 +1353,9 @@ def _failure_trace_signals(task: str) -> list[str]:
     for quote_pat in (r'"([^"]{6,120})"', r"'([^']{6,120})'", r"[‘’“”]([^‘’“”]{6,120})[‘’“”]"):
         signals.extend(re.findall(quote_pat, task))
     signals.extend(re.findall(r"\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+){1,}\b", task))
+    # Tasks arrive hard-wrapped (issue bodies, prompt files): a quoted phrase
+    # split across a line break must still match single-line file content.
+    signals = [re.sub(r"\s+", " ", s) for s in signals]
     return _dedupe([s.strip() for s in signals if s.strip()])
 
 
@@ -1251,6 +1372,9 @@ def _failure_trace_files(root: Path, paths: list[str], signals: list[str]) -> se
             content = full.read_text(errors="ignore").lower()
         except Exception:
             continue
+        # Whitespace-normalized on both sides: source files wrap long message
+        # strings too (concatenation aside, formatters break lines mid-phrase).
+        content = re.sub(r"\s+", " ", content)
         if any(signal in content for signal in lowered):
             hits.add(path)
     return hits
@@ -1485,6 +1609,14 @@ def _is_editable_candidate(path: str, task: str) -> bool:
         return bool(task_terms & config_terms)
     if lower.startswith(("docs/", "system design/", "ai system docs/", "stitch_ui_frontend_design/")):
         return False
+    # Legacy/deprecated trees keyword-match like the live code they shadow but
+    # are almost never the fix site — unless the task is about them. Same
+    # gate-by-intent logic as types/config/locales.
+    if {"legacy", "deprecated", "obsolete"} & set(lower.split("/")):
+        return bool(task_terms & {
+            "legacy", "deprecated", "deprecation", "obsolete", "compat",
+            "compatibility", "migration", "backport",
+        })
     # Locale / i18n files match broad task keywords (every locale repeats the same
     # message vocabulary) but are almost never where a behavior bug lives — unless
     # the task is itself about localization. Same gate-by-intent logic as types/config.
