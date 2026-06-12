@@ -172,3 +172,27 @@ def test_no_stop_condition_without_editable_paths(tmp_path):
     wo = _wo(editable_paths=[])
     _reconcile_contract(wo, tmp_path)
     assert not any("outside editable_paths" in cond for cond in wo.stop_conditions)
+
+
+# ── validation-command grounding (large-monorepo explosion) ──────────────────
+
+def test_validation_commands_capped_on_large_monorepo(tmp_path):
+    # zod reproduction: ~170 candidate test files must not become 170 npm commands.
+    from sembl.generator import _ground_validation_commands
+    from sembl.repo_probe import RepoProbe
+
+    (tmp_path / "package.json").write_text('{"scripts":{"test":"vitest"}}', encoding="utf-8")
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    test_files = []
+    for i in range(170):
+        rel = f"tests/t{i}.test.ts"
+        (tmp_path / rel).write_text("test('x',()=>{})", encoding="utf-8")
+        test_files.append(rel)
+
+    probe = RepoProbe(repo_path=str(tmp_path))
+    out = _ground_validation_commands([], probe, tmp_path, test_files)
+
+    assert len(out) <= 10
+    # the few that survive are the head (top-ranked) test files, not all 170
+    assert sum(1 for c in out if c.startswith("npm test --")) <= 3

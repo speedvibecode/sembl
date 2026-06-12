@@ -1319,8 +1319,12 @@ def _ground_validation_commands(
     known = set(probe.test_commands + probe.lint_commands + probe.build_commands)
     package_scripts = _package_scripts(root)
 
+    # Only the few most task-relevant test files become explicit commands. On a
+    # large monorepo, candidate_test_files can be 100+ — emitting one npm command
+    # per file produced a multi-hundred-command validation block (zod). test_files
+    # arrives task-ranked, so the head is the relevant slice.
     if "test" in package_scripts:
-        for test_file in test_files or []:
+        for test_file in (test_files or [])[:3]:
             test_command = f"npm test -- {test_file}"
             if test_command not in grounded:
                 grounded.append(test_command)
@@ -1348,7 +1352,9 @@ def _ground_validation_commands(
     for command in known:
         if command not in grounded:
             grounded.append(command)
-    return _dedupe(grounded)
+    # Cap the total: a Work Order's proof step must be actionable, not a wall of
+    # commands. Keep the head (relevant per-file tests + LLM picks come first).
+    return _dedupe(grounded)[:10]
 
 
 def _extract_command_paths(command: str) -> list[str]:
