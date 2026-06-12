@@ -56,7 +56,7 @@ def main():
 @click.option("--task",     "-t", required=True,
               help="The task or request to turn into a Work Order.")
 @click.option("--provider", "-p", default="openai",
-              type=click.Choice(["openai", "anthropic", "gemini", "nvidia", "openrouter", "ollama"], case_sensitive=False),
+              type=click.Choice(["openai", "anthropic", "gemini", "nvidia", "openrouter", "tokenrouter", "ollama"], case_sensitive=False),
               show_default=True, help="LLM provider.")
 @click.option("--model",    "-m", default=None,
               help="Model name. Defaults to gpt-4o (openai), claude-sonnet-4-6 (anthropic), gemini-2.5-flash (gemini), or mistralai/mistral-medium-3.5-128b (nvidia).")
@@ -78,8 +78,11 @@ def main():
               help="Skip code-review-graph even if available.")
 @click.option("--no-graph-enrichment", is_flag=True, default=False,
               help="Skip the LLM pre-pass that synthesizes code-review-graph output into an impact analysis.")
+@click.option("--graph-age-threshold", default=24.0, show_default=True,
+              help="Warn if graph artifacts are older than this (hours).")
 def generate(repo, task, provider, model, api_key, graph_mode, refresh_graph,
-             require_graph_context, no_graphify, no_crg, no_graph_enrichment):
+             require_graph_context, no_graphify, no_crg, no_graph_enrichment,
+             graph_age_threshold):
     """Generate a Work Order from a repo and a task description."""
 
     repo_path = str(Path(repo).resolve())
@@ -94,7 +97,7 @@ def generate(repo, task, provider, model, api_key, graph_mode, refresh_graph,
     console.print()
 
     # ── Step 1: Graph diagnostics (cheap, no LLM) ─────────────────────────
-    diag = detect(repo_path)
+    diag = detect(repo_path, age_threshold_hours=graph_age_threshold)
 
     if refresh_graph:
         if mode == "off":
@@ -108,7 +111,7 @@ def generate(repo, task, provider, model, api_key, graph_mode, refresh_graph,
             sys.exit(1)
         else:
             _refresh_graph(repo_path, diag)
-            diag = detect(repo_path)  # re-read after rebuilding
+            diag = detect(repo_path, age_threshold_hours=graph_age_threshold)  # re-read after rebuilding
 
     # ── Step 2: Resolve what to do with graph context ─────────────────────
     action, message = resolve_graph_plan(mode, diag)
@@ -179,14 +182,16 @@ def generate(repo, task, provider, model, api_key, graph_mode, refresh_graph,
               help="Print the diagnostics as JSON.")
 @click.option("--fix", is_flag=True, default=False,
               help="Install missing graph tools. Opt-in: only runs when you pass --fix, and it changes your Python environment.")
-def doctor(repo, as_json, fix):
+@click.option("--graph-age-threshold", default=24.0, show_default=True,
+              help="Warn if graph artifacts are older than this (hours).")
+def doctor(repo, as_json, fix, graph_age_threshold):
     """Check the graph subsystem: tools, graphs, provider keys, and how to fix gaps."""
     repo_path = str(Path(repo).resolve())
-    diag = detect(repo_path)
+    diag = detect(repo_path, age_threshold_hours=graph_age_threshold)
 
     if fix and tools_missing(diag):
         _fix_tools()
-        diag = detect(repo_path)
+        diag = detect(repo_path, age_threshold_hours=graph_age_threshold)
     elif fix:
         console.print("[green]Graph tools already installed — nothing to fix.[/green]\n")
 
@@ -521,6 +526,7 @@ def _check_api_key(provider: str, api_key: str | None):
         "gemini": "Gemini",
         "nvidia": "NVIDIA",
         "openrouter": "OpenRouter",
+        "tokenrouter": "TokenRouter",
     }
     env_keys = {
         "openai": "OPENAI_API_KEY",
@@ -528,6 +534,7 @@ def _check_api_key(provider: str, api_key: str | None):
         "gemini": "GEMINI_API_KEY",
         "nvidia": "NVIDIA_API_KEY",
         "openrouter": "OPENROUTER_API_KEY",
+        "tokenrouter": "TOKENROUTER_API_KEY",
     }
     env_key = env_keys[provider_key]
     if not api_key and not os.environ.get(env_key):

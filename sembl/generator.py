@@ -445,6 +445,8 @@ def _call_llm(
         return _call_nvidia(system_prompt, user_prompt, model, api_key)
     if provider == "openrouter":
         return _call_openrouter(system_prompt, user_prompt, model, api_key)
+    if provider == "tokenrouter":
+        return _call_tokenrouter(system_prompt, user_prompt, model, api_key)
     if provider == "ollama":
         return _call_ollama(system_prompt, user_prompt, model, api_key)
     if provider == "openai":
@@ -577,6 +579,47 @@ def _call_nvidia(system_prompt, user_prompt, model, api_key) -> str:
         raise ProviderAPIError(
             str(e),
             provider="nvidia",
+            status_code=getattr(e, "status_code", None),
+            code=getattr(e, "code", None),
+        ) from None
+
+    return response.choices[0].message.content or ""
+
+
+def _call_tokenrouter(system_prompt, user_prompt, model, api_key) -> str:
+    """TokenRouter is OpenAI-API-compatible (base_url https://api.tokenrouter.com/v1).
+
+    Gives access to near-frontier models like MiniMax-M3 at low/free cost. Reasoning
+    models may emit a <think>...</think> preamble before the JSON; Sembl's parser
+    extracts the object regardless. Treat the key as disposable (third-party router).
+    """
+    from openai import OpenAI
+
+    key = api_key or os.environ.get("TOKENROUTER_API_KEY")
+    if not key:
+        raise ValueError("No TokenRouter API key. Set TOKENROUTER_API_KEY or pass --api-key.")
+
+    client = OpenAI(
+        api_key=key,
+        base_url="https://api.tokenrouter.com/v1",
+    )
+    m = model or "MiniMax-M3"
+
+    try:
+        response = client.chat.completions.create(
+            model=m,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.2,
+            max_tokens=8192,
+            stream=False,
+        )
+    except Exception as e:
+        raise ProviderAPIError(
+            str(e),
+            provider="tokenrouter",
             status_code=getattr(e, "status_code", None),
             code=getattr(e, "code", None),
         ) from None
