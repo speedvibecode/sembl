@@ -1,0 +1,1 @@
+﻿{ "primary": ["packages/zod/src/v4/core/util.ts"], "secondary": ["packages/zod/src/v4/classic/tests/default.test.ts"], "notes": "ref fix PR #5855: shallowClone Map/Set in v4 core/util.ts + test. v3 changes are out of reference scope." }
