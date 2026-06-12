@@ -56,7 +56,7 @@ def main():
 @click.option("--task",     "-t", required=True,
               help="The task or request to turn into a Work Order.")
 @click.option("--provider", "-p", default="openai",
-              type=click.Choice(["openai", "anthropic", "gemini", "nvidia", "openrouter", "tokenrouter", "ollama"], case_sensitive=False),
+              type=click.Choice(["openai", "anthropic", "gemini", "nvidia", "openrouter", "tokenrouter", "ollama", "claude-cli"], case_sensitive=False),
               show_default=True, help="LLM provider.")
 @click.option("--model",    "-m", default=None,
               help="Model name. Defaults to gpt-4o (openai), claude-sonnet-4-6 (anthropic), gemini-2.5-flash (gemini), or mistralai/mistral-medium-3.5-128b (nvidia).")
@@ -518,8 +518,8 @@ def _find_wo_dir(repo_path: Path, wo_id: str | None) -> Path | None:
 def _check_api_key(provider: str, api_key: str | None):
     # Local providers need no API key.
     provider_key = provider.lower()
-    if provider_key == "ollama":
-        return
+    if provider_key in ("ollama", "claude-cli"):
+        return  # no API key: local inference / subscription-authenticated CLI
     provider_names = {
         "openai": "OpenAI",
         "anthropic": "Anthropic",

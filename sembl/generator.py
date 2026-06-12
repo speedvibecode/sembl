@@ -10,6 +10,7 @@ The Work Order schema is our design — not borrowed from any other tool.
 import json
 import os
 import re
+import shutil
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -97,6 +98,12 @@ class WorkOrder:
     # Graph intelligence — LLM synthesis over code-review-graph structural output
     graph_impact_analysis: str = ""
 
+    # Generation cost accounting (provider, model, tokens, walltime). Filled by
+    # generate_work_order so every WO carries what it cost to produce — the
+    # cost/quality frontier ("a $0.10 WO makes a $2 execution behave") needs
+    # this recorded at the source.
+    generation: dict = field(default_factory=dict)
+
     # Reconciliation (filled post-execution)
     reconciliation: dict = field(default_factory=lambda: {
         "status": "pending",
@@ -164,6 +171,8 @@ def generate_work_order(
     semantic impact analysis, which then grounds the main generation.
     """
     wo = WorkOrder()
+    _USAGE_EVENTS.clear()
+    generation_started = datetime.now(timezone.utc)
     wo.id = _generate_id(task, probe.project_name)
     wo.created_at = datetime.now(timezone.utc).isoformat()
     wo.repo_path = probe.repo_path
@@ -190,6 +199,14 @@ def generate_work_order(
     _parse_llm_response(raw, wo, probe)
     _ground_work_order_in_repo(wo, probe)
 
+    wo.generation = {
+        "provider": model_provider,
+        "model": model or "",
+        "seconds": round(
+            (datetime.now(timezone.utc) - generation_started).total_seconds(), 1
+        ),
+        **_aggregate_usage(),
+    }
     return wo
 
 
@@ -429,6 +446,51 @@ def _build_user_prompt(task: str, probe: RepoProbe, graph_impact: str = "") -> s
 
 # ── LLM call ─────────────────────────────────────────────────────────────────
 
+# Per-call usage events recorded by the _call_* providers (when the provider
+# reports usage at all) and aggregated by generate_work_order into wo.generation.
+_USAGE_EVENTS: list = []
+
+
+def _record_openai_style_usage(provider: str, model: str, response):
+    usage = getattr(response, "usage", None)
+    if usage is not None:
+        _record_usage(
+            provider, model,
+            getattr(usage, "prompt_tokens", 0),
+            getattr(usage, "completion_tokens", 0),
+        )
+
+
+def _record_usage(provider: str, model: str, input_tokens, output_tokens, cost_usd=None):
+    try:
+        _USAGE_EVENTS.append({
+            "provider": provider,
+            "model": model,
+            "input_tokens": int(input_tokens or 0),
+            "output_tokens": int(output_tokens or 0),
+            **({"cost_usd": float(cost_usd)} if cost_usd is not None else {}),
+        })
+    except (TypeError, ValueError):
+        pass  # usage reporting must never break generation
+
+
+def _aggregate_usage() -> dict:
+    if not _USAGE_EVENTS:
+        return {}
+    total_in = sum(e["input_tokens"] for e in _USAGE_EVENTS)
+    total_out = sum(e["output_tokens"] for e in _USAGE_EVENTS)
+    out = {
+        "calls": len(_USAGE_EVENTS),
+        "input_tokens": total_in,
+        "output_tokens": total_out,
+        "total_tokens": total_in + total_out,
+    }
+    costs = [e["cost_usd"] for e in _USAGE_EVENTS if "cost_usd" in e]
+    if costs:
+        out["cost_usd"] = round(sum(costs), 6)
+    return out
+
+
 def _call_llm(
     system_prompt: str,
     user_prompt: str,
@@ -449,9 +511,78 @@ def _call_llm(
         return _call_tokenrouter(system_prompt, user_prompt, model, api_key)
     if provider == "ollama":
         return _call_ollama(system_prompt, user_prompt, model, api_key)
+    if provider == "claude-cli":
+        return _call_claude_cli(system_prompt, user_prompt, model, api_key)
     if provider == "openai":
         return _call_openai(system_prompt, user_prompt, model, api_key)
     raise ValueError(f"Unsupported provider: {provider}")
+
+
+def _call_claude_cli(system_prompt, user_prompt, model, api_key) -> str:
+    """Claude models via the locally installed Claude Code CLI (`claude -p`).
+
+    Uses the user's existing Claude subscription — no API key, no per-token
+    spend. The prompt is passed on stdin (Windows native-arg quoting mangles
+    embedded quotes) and the process runs in a temp directory so the CLI's
+    file tools have nothing to read: generation must come from the prompt
+    alone, same as every API provider.
+    """
+    import subprocess
+    import tempfile
+
+    exe = shutil.which("claude")
+    if not exe:
+        raise ProviderAPIError(
+            "Claude Code CLI not found on PATH. Install it or use another provider.",
+            provider="claude-cli",
+        )
+    m = model or "sonnet"
+    full_prompt = f"{system_prompt}\n\n---\n\n{user_prompt}"
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            proc = subprocess.run(
+                [exe, "-p", "--model", m, "--output-format", "json"],
+                input=full_prompt,
+                cwd=tmp,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=600,
+            )
+        except subprocess.TimeoutExpired:
+            raise ProviderAPIError(
+                "Claude Code CLI timed out after 600s.",
+                provider="claude-cli",
+            ) from None
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()[:500]
+        raise ProviderAPIError(
+            f"Claude Code CLI exited with {proc.returncode}: {detail}",
+            provider="claude-cli",
+        )
+    if not (proc.stdout or "").strip():
+        raise ProviderAPIError(
+            "Claude Code CLI returned an empty response.",
+            provider="claude-cli",
+        )
+    # --output-format json wraps the text in an envelope that also reports
+    # token usage and modeled cost — the only executor-grade CLI that does.
+    try:
+        envelope = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return proc.stdout  # older CLI / unexpected shape: treat as raw text
+    usage = envelope.get("usage") or {}
+    if usage:
+        _record_usage(
+            "claude-cli", m,
+            (usage.get("input_tokens", 0) or 0)
+            + (usage.get("cache_read_input_tokens", 0) or 0)
+            + (usage.get("cache_creation_input_tokens", 0) or 0),
+            usage.get("output_tokens", 0),
+            cost_usd=envelope.get("total_cost_usd"),
+        )
+    return envelope.get("result") or ""
 
 
 def _call_openai(system_prompt, user_prompt, model, api_key) -> str:
@@ -471,6 +602,7 @@ def _call_openai(system_prompt, user_prompt, model, api_key) -> str:
         max_tokens=8192,
         response_format={"type": "json_object"},
     )
+    _record_openai_style_usage("openai", m, response)
     return response.choices[0].message.content
 
 
@@ -488,6 +620,13 @@ def _call_anthropic(system_prompt, user_prompt, model, api_key) -> str:
         messages=[{"role": "user", "content": user_prompt}],
         temperature=0.2,
     )
+    usage = getattr(response, "usage", None)
+    if usage is not None:
+        _record_usage(
+            "anthropic", m,
+            getattr(usage, "input_tokens", 0),
+            getattr(usage, "output_tokens", 0),
+        )
     return response.content[0].text
 
 
@@ -548,6 +687,13 @@ def _call_gemini(system_prompt, user_prompt, model, api_key) -> str:
             "Gemini returned an empty response.",
             provider="gemini",
         )
+    meta = data.get("usageMetadata") or {}
+    if meta:
+        _record_usage(
+            "gemini", m,
+            meta.get("promptTokenCount", 0),
+            meta.get("candidatesTokenCount", 0),
+        )
     return text
 
 
@@ -583,6 +729,7 @@ def _call_nvidia(system_prompt, user_prompt, model, api_key) -> str:
             code=getattr(e, "code", None),
         ) from None
 
+    _record_openai_style_usage("nvidia", m, response)
     return response.choices[0].message.content or ""
 
 
@@ -624,6 +771,7 @@ def _call_tokenrouter(system_prompt, user_prompt, model, api_key) -> str:
             code=getattr(e, "code", None),
         ) from None
 
+    _record_openai_style_usage("tokenrouter", m, response)
     return response.choices[0].message.content or ""
 
 
@@ -669,6 +817,7 @@ def _call_openrouter(system_prompt, user_prompt, model, api_key) -> str:
             code=getattr(e, "code", None),
         ) from None
 
+    _record_openai_style_usage("openrouter", m, response)
     return response.choices[0].message.content or ""
 
 
@@ -709,6 +858,7 @@ def _call_ollama(system_prompt, user_prompt, model, api_key) -> str:
             code=getattr(e, "code", None),
         ) from None
 
+    _record_openai_style_usage("ollama", m, response)
     return response.choices[0].message.content or ""
 
 

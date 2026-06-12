@@ -447,3 +447,12 @@ def test_directory_shaped_narrowing_stop_condition_dropped(tmp_path):
     assert any("type inference" in c for c in wo.stop_conditions)
     # canonical Lock-7 ("outside editable_paths", no slash) is appended, not dropped
     assert any("outside editable_paths" in c for c in wo.stop_conditions)
+
+
+# 0.1.11 claude-cli provider (subscription CLI, no API key)
+
+def test_claude_cli_provider_missing_binary_raises(monkeypatch):
+    import sembl.generator as g
+    monkeypatch.setattr(g.shutil, "which", lambda name: None)
+    with pytest.raises(g.ProviderAPIError):
+        g._call_claude_cli("sys", "user", None, None)
