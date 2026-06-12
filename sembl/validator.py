@@ -71,7 +71,15 @@ def validate_against_work_order(
 
 
 def _git_changed_files(root: Path) -> list:
-    """Modified, staged, and untracked files vs HEAD, repo-relative posix paths."""
+    """Modified, staged, and untracked files vs HEAD, repo-relative posix paths.
+
+    Tracked entries are cross-checked against `git diff HEAD --name-only`:
+    `git status` reports line-ending-only rewrites (a formatter run on Windows
+    can dirty every file in the repo), while git's diff machinery normalizes
+    EOLs away. Counting EOL-only files as edits made validate flag ~200
+    untouched files on the zod gemini-3-pro cell. Untracked files (never in
+    a diff against HEAD) are kept from status.
+    """
     try:
         proc = subprocess.run(
             ["git", "status", "--porcelain", "-uall"],
@@ -82,10 +90,27 @@ def _git_changed_files(root: Path) -> list:
         return []
     if proc.returncode != 0:
         return []
+
+    content_changed: set | None = None
+    try:
+        diff_proc = subprocess.run(
+            ["git", "diff", "HEAD", "--name-only"],
+            cwd=str(root), capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30,
+        )
+        if diff_proc.returncode == 0:
+            content_changed = {
+                _norm(line.strip().strip('"'))
+                for line in diff_proc.stdout.splitlines() if line.strip()
+            }
+    except Exception:
+        pass  # fall back to trusting git status
+
     files = []
     for line in proc.stdout.splitlines():
         if len(line) < 4:
             continue
+        code = line[:2]
         path = line[3:].strip().strip('"')
         if " -> " in path:  # renames: take the new side
             path = path.split(" -> ", 1)[1].strip().strip('"')
@@ -93,8 +118,11 @@ def _git_changed_files(root: Path) -> list:
         # Sembl's own output and graph artifacts are not executor work.
         if path == ".sembl" or path.startswith((".sembl/", "graphify-out/")):
             continue
-        if path:
-            files.append(path)
+        if not path:
+            continue
+        if code != "??" and content_changed is not None and path not in content_changed:
+            continue  # EOL-only rewrite, not an edit
+        files.append(path)
     return sorted(set(files))
 
 

@@ -119,3 +119,24 @@ def test_load_report_tolerates_json_fence(tmp_path):
     path = tmp_path / "report.txt"
     path.write_text('```json\n{"files_modified": ["a.py"]}\n```', encoding="utf-8")
     assert load_report(str(path)) == {"files_modified": ["a.py"]}
+
+
+def test_eol_only_rewrites_are_not_edits(git_repo, monkeypatch):
+    # zod gemini-3-pro cell: a formatter rewrote line endings repo-wide; git
+    # status listed ~350 modified files while git diff HEAD (EOL-normalizing)
+    # showed only the 2 real edits. EOL-only files must not fail validate.
+    import sembl.validator as v
+
+    real_run = subprocess.run
+
+    def fake_run(args, **kwargs):
+        if args[:2] == ["git", "status"]:
+            out = " M httpie/ssl_.py\n M httpie/core.py\n?? notes.txt\n"
+            return subprocess.CompletedProcess(args, 0, stdout=out, stderr="")
+        if args[:2] == ["git", "diff"]:
+            return subprocess.CompletedProcess(args, 0, stdout="httpie/ssl_.py\n", stderr="")
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(v.subprocess, "run", fake_run)
+    # core.py is EOL-only (in status, not in diff) -> excluded; untracked kept
+    assert v._git_changed_files(git_repo) == ["httpie/ssl_.py", "notes.txt"]
