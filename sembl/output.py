@@ -57,6 +57,20 @@ def _write_markdown(wo: WorkOrder, out_dir: Path):
         "",
     ]
 
+    # Lock 1 - Intent uncertainty (from the clarify stage)
+    if wo.intent_confidence and wo.intent_confidence != "unknown":
+        status = "CLARIFICATION REQUIRED" if wo.clarification_required else "ready to scope"
+        lines += [
+            f"**Intent confidence:** `{wo.intent_confidence.upper()}` "
+            f"(underspecification {wo.underspecification_score:.2f}) - {status}",
+            "",
+        ]
+        if wo.ambiguity_tags:
+            lines += [f"**Ambiguity:** {', '.join(wo.ambiguity_tags)}", ""]
+        lines += _md_list("Open questions (answer before / during execution)", wo.blocked_until_answered)
+        lines += _md_list("Unsafe to assume (ask first)", wo.unsafe_assumptions)
+        lines += _md_list("Safe assumptions taken", wo.assumptions)
+
     # Lock 2 - Boundary
     lines += ["## 2. Boundary Lock", ""]
     lines += _md_list("Non-goals", wo.non_goals)
@@ -113,6 +127,8 @@ def _write_markdown(wo: WorkOrder, out_dir: Path):
         "",
     ]
     lines += _md_list("Patch expectations", wo.patch_expectations)
+    if wo.churn_budget:
+        lines += [f"**Size budget:** {_churn_budget_text(wo.churn_budget)}", ""]
     if wo.reporting_format:
         lines += [f"**Reporting format:** {wo.reporting_format}", ""]
 
@@ -152,6 +168,25 @@ def _write_executor_prompt(wo: WorkOrder, out_dir: Path):
         "",
         wo.executor_prompt,
         "",
+    ]
+
+    if wo.clarification_required and (wo.blocked_until_answered or wo.unsafe_assumptions):
+        lines += [
+            "---",
+            "",
+            "## Open questions - DO NOT assume answers",
+            "",
+            "This task was flagged underspecified. If your work depends on any of the "
+            "following, STOP and ask the human rather than guessing:",
+            "",
+        ]
+        for q in wo.blocked_until_answered:
+            lines.append(f"- {q}")
+        for a in wo.unsafe_assumptions:
+            lines.append(f"- (unsafe to assume) {a}")
+
+    lines += [
+        "",
         "---",
         "",
         "## Scope enforcement",
@@ -179,6 +214,14 @@ def _write_executor_prompt(wo: WorkOrder, out_dir: Path):
     ]
     for pe in wo.patch_expectations:
         lines.append(f"- {pe}")
+    if wo.churn_budget:
+        lines += [
+            "",
+            "## Size budget",
+            "",
+            f"- Keep the diff within {_churn_budget_text(wo.churn_budget)}. "
+            "A larger change is allowed only if the task genuinely requires it.",
+        ]
 
     _write_markdown_file(out_dir / "executor-prompt.md", lines)
 
@@ -270,6 +313,17 @@ def _write_graph_impact(wo: WorkOrder, out_dir: Path):
 
 
 # Helpers
+
+def _churn_budget_text(budget: dict) -> str:
+    """Render a churn_budget dict as a compact phrase, e.g. '<=6 files, <=200 lines'."""
+    parts = []
+    if isinstance(budget, dict):
+        if budget.get("max_files"):
+            parts.append(f"<={budget['max_files']} files")
+        if budget.get("max_lines"):
+            parts.append(f"<={budget['max_lines']} lines")
+    return ", ".join(parts) if parts else "no explicit limit"
+
 
 def _md_list(title: str, items: list, numbered: bool = False, code: bool = False) -> list[str]:
     if not items:

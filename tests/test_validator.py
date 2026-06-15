@@ -121,6 +121,162 @@ def test_load_report_tolerates_json_fence(tmp_path):
     assert load_report(str(path)) == {"files_modified": ["a.py"]}
 
 
+# ── verdict layer ───────────────────────────────────────────────────────────
+
+
+def test_verdict_pass_on_clean_in_scope(git_repo):
+    (git_repo / "httpie" / "ssl_.py").write_text("FIXED", encoding="utf-8")
+    result = validate_against_work_order(str(git_repo), WO)
+    assert result.verdict() == "PASS"
+    assert result.reasons() == []
+
+
+def test_verdict_block_on_out_of_scope(git_repo):
+    (git_repo / "httpie" / "core.py").write_text("CHANGED", encoding="utf-8")
+    result = validate_against_work_order(str(git_repo), WO)
+    assert result.verdict() == "BLOCK"
+    assert not result.ok
+
+
+def test_verdict_block_on_forbidden(git_repo):
+    (git_repo / "docs" / "readme.md").write_text("CHANGED", encoding="utf-8")
+    result = validate_against_work_order(str(git_repo), WO)
+    assert result.verdict() == "BLOCK"
+
+
+def test_verdict_warn_on_unreported(git_repo):
+    (git_repo / "httpie" / "ssl_.py").write_text("FIXED", encoding="utf-8")
+    result = validate_against_work_order(str(git_repo), WO, {"files_modified": []})
+    assert result.verdict() == "WARN"
+    assert result.ok  # WARN is not a hard breach
+
+
+def test_to_dict_carries_verdict_and_reasons(git_repo):
+    (git_repo / "httpie" / "core.py").write_text("CHANGED", encoding="utf-8")
+    data = validate_against_work_order(str(git_repo), WO).to_dict()
+    assert data["verdict"] == "BLOCK"
+    assert any("out-of-scope" in r for r in data["reasons"])
+
+
+# ── broad churn vs budget ─────────────────────────────────────────────────────
+
+
+def test_churn_within_budget_is_clean(git_repo):
+    (git_repo / "httpie" / "ssl_.py").write_text("line1\nline2\n", encoding="utf-8")
+    wo = {**WO, "churn_budget": {"max_files": 5, "max_lines": 100}}
+    result = validate_against_work_order(str(git_repo), wo)
+    assert result.churn_over_budget == {}
+    assert result.verdict() == "PASS"
+
+
+def test_churn_over_file_budget_warns(git_repo):
+    (git_repo / "httpie" / "ssl_.py").write_text("X", encoding="utf-8")
+    (git_repo / "httpie" / "core.py").write_text("X", encoding="utf-8")
+    # both files in editable scope so the only finding is churn
+    wo = {"editable_paths": ["httpie/"], "churn_budget": {"max_files": 1}}
+    result = validate_against_work_order(str(git_repo), wo)
+    assert result.churn_over_budget.get("files") == 2
+    assert result.churn_over_budget.get("max_files") == 1
+    assert result.verdict() == "WARN"
+
+
+def test_churn_over_line_budget_warns(git_repo):
+    body = "\n".join(f"line{i}" for i in range(50)) + "\n"
+    (git_repo / "httpie" / "ssl_.py").write_text(body, encoding="utf-8")
+    wo = {**WO, "churn_budget": {"max_lines": 10}}
+    result = validate_against_work_order(str(git_repo), wo)
+    assert result.churn_over_budget.get("max_lines") == 10
+    assert result.churn_over_budget.get("lines", 0) > 10
+    assert result.verdict() == "WARN"
+
+
+def test_no_budget_means_no_churn_finding(git_repo):
+    body = "\n".join(f"line{i}" for i in range(200)) + "\n"
+    (git_repo / "httpie" / "ssl_.py").write_text(body, encoding="utf-8")
+    result = validate_against_work_order(str(git_repo), WO)  # no churn_budget
+    assert result.churn_over_budget == {}
+    assert result.verdict() == "PASS"
+
+
+# ── validation actually ran (claim without evidence) ──────────────────────────
+
+
+def test_validation_claimed_without_evidence_warns(git_repo):
+    (git_repo / "httpie" / "ssl_.py").write_text("FIXED", encoding="utf-8")
+    report = {"files_modified": ["httpie/ssl_.py"], "tests_passed": True}
+    result = validate_against_work_order(str(git_repo), WO, report)
+    assert "tests_passed" in result.validation_not_run
+    assert result.verdict() == "WARN"
+
+
+def test_validation_claimed_with_exit_code_is_evidenced(git_repo):
+    (git_repo / "httpie" / "ssl_.py").write_text("FIXED", encoding="utf-8")
+    report = {"files_modified": ["httpie/ssl_.py"], "tests_passed": True, "exit_code": 0}
+    result = validate_against_work_order(str(git_repo), WO, report)
+    assert result.validation_not_run == []
+    assert result.verdict() == "PASS"
+
+
+def test_validation_checklist_item_without_evidence_warns(git_repo):
+    (git_repo / "httpie" / "ssl_.py").write_text("FIXED", encoding="utf-8")
+    report = {
+        "files_modified": ["httpie/ssl_.py"],
+        "checks": [{"command": "pytest", "status": "passed"}],
+    }
+    result = validate_against_work_order(str(git_repo), WO, report)
+    assert "pytest" in result.validation_not_run
+
+
+def test_validation_checklist_item_with_output_is_evidenced(git_repo):
+    (git_repo / "httpie" / "ssl_.py").write_text("FIXED", encoding="utf-8")
+    report = {
+        "files_modified": ["httpie/ssl_.py"],
+        "checks": [{"command": "pytest", "status": "passed", "output": "5 passed"}],
+    }
+    result = validate_against_work_order(str(git_repo), WO, report)
+    assert result.validation_not_run == []
+
+
+def test_no_validation_claim_means_no_finding(git_repo):
+    (git_repo / "httpie" / "ssl_.py").write_text("FIXED", encoding="utf-8")
+    report = {"files_modified": ["httpie/ssl_.py"]}
+    result = validate_against_work_order(str(git_repo), WO, report)
+    assert result.validation_not_run == []
+    assert result.verdict() == "PASS"
+
+
+# ── diff mode (no git tree) ───────────────────────────────────────────────────
+
+
+def test_diff_mode_scopes_without_git(tmp_path):
+    # No commits, no working-tree changes — everything comes from changed_files.
+    wo = {"editable_paths": ["src/a.py"], "forbidden_areas": ["docs/"]}
+    result = validate_against_work_order(
+        str(tmp_path), wo,
+        changed_files=["src/a.py", "src/b.py", "docs/readme.md"],
+    )
+    assert result.in_scope == ["src/a.py"]
+    assert result.out_of_scope == ["src/b.py"]
+    assert result.forbidden_hits == ["docs/readme.md"]
+    assert result.verdict() == "BLOCK"
+
+
+def test_diff_mode_churn_uses_line_count(tmp_path):
+    wo = {"editable_paths": ["src/a.py"], "churn_budget": {"max_lines": 10}}
+    result = validate_against_work_order(
+        str(tmp_path), wo, changed_files=["src/a.py"], diff_line_count=42,
+    )
+    assert result.churn_over_budget.get("lines") == 42
+    assert result.verdict() == "WARN"
+
+
+def test_diff_mode_empty_changed_files_is_pass(tmp_path):
+    wo = {"editable_paths": ["src/a.py"]}
+    result = validate_against_work_order(str(tmp_path), wo, changed_files=[])
+    assert result.changed_files == []
+    assert result.verdict() == "PASS"
+
+
 def test_eol_only_rewrites_are_not_edits(git_repo, monkeypatch):
     # zod gemini-3-pro cell: a formatter rewrote line endings repo-wide; git
     # status listed ~350 modified files while git diff HEAD (EOL-normalizing)

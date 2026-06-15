@@ -59,6 +59,18 @@ class WorkOrder:
     user_visible_outcome: str = ""
     task_type: str = ""
 
+    # Lock 1 — Intent uncertainty (filled by the clarify stage, see clarify.py).
+    # A Work Order that hides its own uncertainty invites a confident wrong change;
+    # these fields carry it forward so both the human and the executor can see it.
+    intent_confidence: str = "unknown"          # high | medium | low | unknown
+    clarification_required: bool = False
+    underspecification_score: float = 0.0
+    clarification_questions: list = field(default_factory=list)
+    assumptions: list = field(default_factory=list)        # safe defaults taken
+    unsafe_assumptions: list = field(default_factory=list)  # would be dangerous to assume
+    blocked_until_answered: list = field(default_factory=list)
+    ambiguity_tags: list = field(default_factory=list)
+
     # Lock 2 — Boundary
     non_goals: list = field(default_factory=list)
     must_not_change: list = field(default_factory=list)
@@ -93,6 +105,9 @@ class WorkOrder:
     # Lock 8 — Executor Packet
     executor_prompt: str = ""
     patch_expectations: list = field(default_factory=list)
+    # Soft size budget for the resulting diff. {max_files, max_lines}. `sembl
+    # verify` WARNs (never blocks) when the diff exceeds it.
+    churn_budget: dict = field(default_factory=dict)
     reporting_format: str = ""
 
     # Graph intelligence — LLM synthesis over code-review-graph structural output
@@ -161,6 +176,7 @@ def generate_work_order(
     model: Optional[str] = None,
     api_key: Optional[str] = None,
     enrich_graph: bool = True,
+    clarity_report=None,
 ) -> WorkOrder:
     """
     Main entry point. Generates a Work Order from task + probe data.
@@ -169,6 +185,12 @@ def generate_work_order(
     When `enrich_graph` is set and code-review-graph structural context is
     available, an LLM pre-pass first synthesizes that raw graph output into a
     semantic impact analysis, which then grounds the main generation.
+
+    `clarity_report` (a clarify.ClarityReport) is the output of the intent stage.
+    When supplied it is embedded into the Work Order's uncertainty fields — the
+    generator never recomputes it, keeping intent analysis and execution
+    packaging decoupled (see clarify.py). When None those fields stay at their
+    "unknown"/empty defaults.
     """
     wo = WorkOrder()
     _USAGE_EVENTS.clear()
@@ -181,6 +203,9 @@ def generate_work_order(
     wo.git_head_commit = probe.git_head_commit
     wo.original_request = task
     wo.project_rules = probe.project_rules
+
+    if clarity_report is not None:
+        _embed_clarity_report(wo, clarity_report)
 
     # Optional LLM pre-pass: reason over the structural graph before generating.
     if enrich_graph:
@@ -208,6 +233,25 @@ def generate_work_order(
         **_aggregate_usage(),
     }
     return wo
+
+
+def _embed_clarity_report(wo: WorkOrder, report) -> None:
+    """Copy the intent stage's ClarityReport onto the Work Order's uncertainty
+    fields. Tolerant of either a ClarityReport or a plain dict so callers can
+    pass a deserialized report."""
+    def _get(name, default):
+        if isinstance(report, dict):
+            return report.get(name, default)
+        return getattr(report, name, default)
+
+    wo.intent_confidence = _get("intent_confidence", "unknown") or "unknown"
+    wo.underspecification_score = float(_get("underspecification_score", 0.0) or 0.0)
+    wo.clarification_required = bool(_get("clarification_required", False))
+    wo.clarification_questions = list(_get("clarification_questions", []) or [])
+    wo.assumptions = list(_get("safe_assumptions", []) or [])
+    wo.unsafe_assumptions = list(_get("unsafe_assumptions", []) or [])
+    wo.blocked_until_answered = list(_get("blocked_until_answered", []) or [])
+    wo.ambiguity_tags = list(_get("ambiguity_tags", []) or [])
 
 
 # ── Graph impact synthesis (LLM pre-pass over code-review-graph) ───────────────
@@ -357,6 +401,7 @@ Output ONLY valid JSON matching this exact schema. No markdown, no explanation, 
   "risk_reasons": ["specific factors that determine the risk level"],
   "executor_prompt": "complete, agent-ready prompt incorporating all locks above",
   "patch_expectations": ["what the output diff/PR should contain"],
+  "churn_budget": {{"max_files": 0, "max_lines": 0}},
   "reporting_format": "how the agent should report its work when done"
 }}
 
@@ -920,6 +965,7 @@ def _parse_llm_response(raw: str, wo: WorkOrder, probe: RepoProbe):
     wo.risk_reasons         = _get("risk_reasons")
     wo.executor_prompt      = _get("executor_prompt", "")
     wo.patch_expectations   = _get("patch_expectations")
+    wo.churn_budget         = _get("churn_budget", {})
     wo.reporting_format     = _get("reporting_format", "")
 
     # Merge any known commands from probe into validation_commands
@@ -1066,8 +1112,31 @@ def _ground_work_order_in_repo(wo: WorkOrder, probe: RepoProbe):
         wo.editable_paths,
         ignored,
     )
+    wo.churn_budget = _ground_churn_budget(wo.churn_budget, wo.editable_paths, wo.task_type)
     _reconcile_contract(wo, root, ignored)
+    _merge_clarification_into_contract(wo)
     _refresh_executor_prompt_from_grounded_fields(wo)
+
+
+def _merge_clarification_into_contract(wo: WorkOrder):
+    """Fold the intent stage's blocking unknowns into Lock 7.
+
+    An unanswered blocking question is, by definition, a reason to stop and ask
+    rather than guess — so it belongs in stop_conditions, and (because acting on
+    it would be an unreviewed judgement call) in approval_triggers. This is the
+    mechanism by which "ask before assuming" survives all the way into the
+    executor packet, not just the report a human reads."""
+    for question in wo.blocked_until_answered:
+        _append_unique(
+            wo.stop_conditions,
+            f"Open question, not yet answered: {question} "
+            "Do not assume an answer — stop and ask the human.",
+        )
+    for assumption in wo.unsafe_assumptions:
+        _append_unique(
+            wo.approval_triggers,
+            f"Proceeding would require this unsafe assumption: {assumption}",
+        )
 
 
 def _asserts_narrower_file_scope(text: str) -> bool:
@@ -1184,6 +1253,16 @@ def _refresh_executor_prompt_from_grounded_fields(wo: WorkOrder):
 
     if wo.user_visible_outcome:
         parts.append(f"User-visible outcome: {wo.user_visible_outcome}.")
+    if wo.unsafe_assumptions:
+        parts.append(
+            "Do NOT silently assume any of the following — they are unsafe to guess: "
+            + _sentence_list(wo.unsafe_assumptions) + ".")
+    if wo.blocked_until_answered:
+        parts.append(
+            "These questions are unanswered; if the work depends on one, stop and ask "
+            "rather than assume: " + _sentence_list(wo.blocked_until_answered) + ".")
+    if wo.assumptions:
+        parts.append("Safe assumptions already made: " + _sentence_list(wo.assumptions) + ".")
     if wo.non_goals:
         parts.append("Non-goals: " + _sentence_list(wo.non_goals) + ".")
     if wo.editable_paths:
@@ -1659,6 +1738,37 @@ def _ground_patch_expectations(
     if not grounded and editable_paths:
         grounded.append("Keep implementation changes within the grounded editable paths.")
     return _dedupe(grounded)
+
+
+def _ground_churn_budget(budget: object, editable_paths: list[str], task_type: str) -> dict:
+    """Normalize churn_budget to {max_files, max_lines}, filling sane defaults.
+
+    The budget is a SOFT signal — `sembl verify` only WARNs when exceeded — so a
+    generous default is fine and never blocks a legitimate change. When the model
+    omits or zeroes a field, derive it from scope breadth: a file budget a little
+    above the explicit editable files, and a line budget scaled by task type
+    (refactors and features touch more than a bugfix).
+    """
+    budget = budget if isinstance(budget, dict) else {}
+
+    def _positive_int(value):
+        return value if isinstance(value, int) and value > 0 else None
+
+    # Count explicit editable *files* (entries that look like a file, not a dir).
+    explicit_files = sum(
+        1 for p in (editable_paths or [])
+        if isinstance(p, str) and "." in p.rsplit("/", 1)[-1]
+    )
+    default_files = max(3, explicit_files + 2)
+
+    line_defaults = {"bugfix": 150, "bug": 150, "fix": 150, "feature": 300,
+                     "refactor": 500, "chore": 200}
+    default_lines = line_defaults.get(str(task_type).lower(), 250)
+
+    return {
+        "max_files": _positive_int(budget.get("max_files")) or default_files,
+        "max_lines": _positive_int(budget.get("max_lines")) or default_lines,
+    }
 
 
 def _ground_validation_commands(

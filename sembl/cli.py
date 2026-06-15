@@ -4,6 +4,7 @@ cli.py
 Sembl CLI — the first machine.
 
 Commands:
+  sembl clarify   — judge if a task is specified enough to scope (intent stage)
   sembl generate  — repo + task → Work Order
   sembl doctor    — check the graph subsystem (tools, graphs, keys, fixes)
   sembl show      — display the latest Work Order
@@ -27,6 +28,7 @@ from rich import box
 from . import __version__
 from .repo_probe import probe_repo, _crg_common_args, _crg_env
 from .generator import generate_work_order
+from .clarify import analyze_clarity, analyze_clarity_best_effort
 from .output import write_work_order
 from .graph_diagnostics import (
     detect,
@@ -80,9 +82,15 @@ def main():
               help="Skip the LLM pre-pass that synthesizes code-review-graph output into an impact analysis.")
 @click.option("--graph-age-threshold", default=24.0, show_default=True,
               help="Warn if graph artifacts are older than this (hours).")
+@click.option("--no-clarify", is_flag=True, default=False,
+              help="Skip the intent/clarify stage. The Work Order is still produced but "
+                   "carries no uncertainty analysis.")
+@click.option("--strict-clarify", is_flag=True, default=False,
+              help="Abort BEFORE generating a Work Order if the task is too underspecified "
+                   "(clarify status=blocked). Use in scripts/CI to force clarification first.")
 def generate(repo, task, provider, model, api_key, graph_mode, refresh_graph,
              require_graph_context, no_graphify, no_crg, no_graph_enrichment,
-             graph_age_threshold):
+             graph_age_threshold, no_clarify, strict_clarify):
     """Generate a Work Order from a repo and a task description."""
 
     repo_path = str(Path(repo).resolve())
@@ -150,6 +158,29 @@ def generate(repo, task, provider, model, api_key, graph_mode, refresh_graph,
     # ── Step 4: Generate Work Order ───────────────────────────────────────
     _check_api_key(provider, api_key)
 
+    # Intent stage (clarify) runs BEFORE packaging — decouple "is this ready to
+    # scope?" from "scope it". A blocked task can be hard-stopped with
+    # --strict-clarify, or generated anyway with its uncertainty recorded.
+    clarity_report = None
+    if not no_clarify:
+        with console.status("[blue]Analyzing task clarity...[/blue]"):
+            clarity_report = analyze_clarity_best_effort(task, probe, provider, model, api_key)
+        if clarity_report is not None:
+            _print_clarity_report(clarity_report)
+            if clarity_report.clarification_required and strict_clarify:
+                console.print(
+                    "[red]Aborting:[/red] task is underspecified and --strict-clarify is set.\n"
+                    "Answer the questions above (or rerun without --strict-clarify to "
+                    "generate anyway with the uncertainty recorded).\n"
+                )
+                sys.exit(2)
+            if clarity_report.clarification_required:
+                console.print(
+                    "[yellow]Proceeding despite open questions[/yellow] — they are recorded in "
+                    "the Work Order's stop conditions so the executor will halt rather than "
+                    "guess.\n"
+                )
+
     enrich = action == "use" and not no_graph_enrichment
     with console.status(f"[blue]Generating Work Order via {provider}...[/blue]"):
         try:
@@ -160,6 +191,7 @@ def generate(repo, task, provider, model, api_key, graph_mode, refresh_graph,
                 model=model,
                 api_key=api_key,
                 enrich_graph=enrich,
+                clarity_report=clarity_report,
             )
         except Exception as e:
             console.print(_format_generation_error(e))
@@ -171,6 +203,93 @@ def generate(repo, task, provider, model, api_key, graph_mode, refresh_graph,
 
     # ── Step 5: Print summary ─────────────────────────────────────────────
     _print_work_order_summary(wo, out_dir)
+
+
+# ── sembl clarify ─────────────────────────────────────────────────────────────
+
+@main.command()
+@click.option("--repo", "-r", default=".", show_default=True,
+              help="Path to the repository (used to ground questions).")
+@click.option("--task", "-t", required=True,
+              help="The task or request to analyze for underspecification.")
+@click.option("--provider", "-p", default="openai",
+              type=click.Choice(["openai", "anthropic", "gemini", "nvidia", "openrouter", "tokenrouter", "ollama", "claude-cli"], case_sensitive=False),
+              show_default=True, help="LLM provider.")
+@click.option("--model", "-m", default=None, help="Model name (provider default if unset).")
+@click.option("--api-key", default=None,
+              help="API key. Otherwise Sembl reads the selected provider env var.")
+@click.option("--json", "as_json", is_flag=True, default=False,
+              help="Print the clarity report as JSON (the machine contract).")
+def clarify(repo, task, provider, model, api_key, as_json):
+    """Judge whether a task is specified well enough to scope — before any code.
+
+    The intent stage: scores underspecification, names the missing information as
+    typed questions, and splits safe assumptions from unsafe ones. Exit code is 0
+    when ready, 2 when blocked (so it can gate a pipeline).
+    """
+    repo_path = str(Path(repo).resolve())
+
+    # Cheap, graph-free probe: clarify only needs repo shape to ground questions.
+    with console.status("[blue]Probing repo...[/blue]"):
+        probe = probe_repo(repo_path, task, use_graphify=False, use_crg=False)
+
+    _check_api_key(provider, api_key)
+
+    with console.status(f"[blue]Analyzing task clarity via {provider}...[/blue]"):
+        try:
+            report = analyze_clarity(task, probe, provider, model, api_key)
+        except Exception as e:
+            console.print(_format_generation_error(e))
+            sys.exit(1)
+
+    if as_json:
+        click.echo(json.dumps(report.to_dict(), indent=2))
+    else:
+        _print_clarity_report(report, title=True)
+
+    sys.exit(2 if report.clarification_required else 0)
+
+
+def _print_clarity_report(report, title: bool = False):
+    blocked = report.clarification_required
+    score_color = {"high": "green", "medium": "yellow", "low": "red"}.get(
+        report.intent_confidence, "white")
+    status_text = (
+        "[bold red]BLOCKED — clarification required[/bold red]" if blocked
+        else "[bold green]READY — specified enough to scope[/bold green]"
+    )
+
+    lines = [
+        status_text,
+        "",
+        f"[bold]Underspecification:[/bold] {report.underspecification_score:.2f}   "
+        f"[bold]Intent confidence:[/bold] [{score_color}]{report.intent_confidence.upper()}[/{score_color}]",
+    ]
+    if report.ambiguity_tags:
+        lines.append(f"[bold]Ambiguity:[/bold] [dim]{', '.join(report.ambiguity_tags)}[/dim]")
+
+    if report.missing_information:
+        lines += ["", "[bold]Missing information:[/bold]"]
+        for item in report.missing_information:
+            flag = "[red](blocking)[/red]" if item.get("blocking") else "[dim](assumable)[/dim]"
+            lines.append(f"  [cyan]{item.get('type','?')}[/cyan] {flag}")
+            lines.append(f"    {escape(item.get('question',''))}")
+
+    if report.unsafe_assumptions:
+        lines += ["", "[bold red]Unsafe to assume (ask first):[/bold red]"]
+        lines += [f"  - {escape(a)}" for a in report.unsafe_assumptions]
+
+    if report.safe_assumptions:
+        lines += ["", "[bold]Safe to assume (will proceed):[/bold]"]
+        lines += [f"  - [dim]{escape(a)}[/dim]" for a in report.safe_assumptions]
+
+    console.print()
+    console.print(Panel(
+        "\n".join(lines),
+        title="[bold blue]Sembl — Intent / Clarify[/bold blue]" if title else "[bold]Task clarity[/bold]",
+        border_style="red" if blocked else "green",
+    ))
+    console.print()
 
 
 # ── sembl doctor ──────────────────────────────────────────────────────────────
@@ -301,6 +420,119 @@ def validate(repo, wo_id, wo_file, report_file):
     verdict = "[bold green]PASS[/bold green]" if result.ok else "[bold red]FAIL[/bold red]"
     console.print(Panel(table, title=f"Work Order validation — {verdict}", border_style="green" if result.ok else "red"))
     sys.exit(0 if result.ok else 1)
+
+
+# ── sembl verify ────────────────────────────────────────────────────────────────
+
+@main.command()
+@click.option("--repo", "-r", default=".", show_default=True,
+              help="Path to the repository whose working tree should be checked.")
+@click.option("--id", "wo_id", default=None,
+              help="Work Order ID. Defaults to latest.")
+@click.option("--wo-file", "wo_file", default=None,
+              type=click.Path(exists=True),
+              help="Path to a work-order.json (overrides --id lookup).")
+@click.option("--report", "report_file", default=None,
+              type=click.Path(exists=True),
+              help="Executor report (JSON) to cross-check against the real diff.")
+@click.option("--json", "as_json", is_flag=True, default=False,
+              help="Emit the full verdict as JSON (for tooling / experiments).")
+@click.option("--strict", is_flag=True, default=False,
+              help="Treat WARN as a failing exit code (for CI gating).")
+def verify(repo, wo_id, wo_file, report_file, as_json, strict):
+    """Verify the actual diff against a Work Order and return a PASS/WARN/BLOCK verdict.
+
+    The change-control verdict layer: deterministic checks only — scope adherence,
+    forbidden-area edits, fabricated success claims, broad churn vs the Work Order's
+    size budget, and validation claimed-but-not-evidenced. No maintainability
+    judgement. Self-reports are never trusted.
+
+    Exit codes: PASS=0, WARN=0 (1 with --strict), BLOCK=1.
+    """
+    import json as _json
+    from .validator import validate_against_work_order, load_report
+
+    repo_path = Path(repo).resolve()
+    if wo_file:
+        wo_json = Path(wo_file)
+    else:
+        wo_dir = _find_wo_dir(repo_path, wo_id)
+        if not wo_dir or not (wo_dir / "work-order.json").exists():
+            console.print("[red]No Work Order found.[/red] Use --wo-file or run [bold]sembl generate[/bold].")
+            sys.exit(1)
+        wo_json = wo_dir / "work-order.json"
+
+    work_order = _json.loads(wo_json.read_text(encoding="utf-8", errors="replace"))
+    report = None
+    if report_file:
+        try:
+            report = load_report(report_file)
+        except Exception as error:
+            console.print(f"[red]Could not parse executor report:[/red] {error}")
+            sys.exit(1)
+
+    result = validate_against_work_order(str(repo_path), work_order, report)
+    verdict = result.verdict()
+
+    if as_json:
+        click.echo(_json.dumps(result.to_dict(), indent=2))
+        sys.exit(_verify_exit_code(verdict, strict))
+
+    style = {"PASS": "green", "WARN": "yellow", "BLOCK": "red"}[verdict]
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Check")
+    table.add_column("Result")
+    table.add_row("Files changed", str(len(result.changed_files)))
+    table.add_row(
+        "Scope (out of scope)",
+        f"[red]{', '.join(result.out_of_scope)}[/red]" if result.out_of_scope else "[green]clean[/green]",
+    )
+    table.add_row(
+        "Forbidden hits",
+        f"[red]{', '.join(result.forbidden_hits)}[/red]" if result.forbidden_hits else "[green]none[/green]",
+    )
+    if report is not None:
+        table.add_row(
+            "Fabricated claims",
+            f"[red]{', '.join(result.fabricated_claims)}[/red]" if result.fabricated_claims else "[green]none[/green]",
+        )
+        table.add_row(
+            "Validation evidenced",
+            f"[yellow]missing: {', '.join(result.validation_not_run)}[/yellow]" if result.validation_not_run else "[green]ok[/green]",
+        )
+        table.add_row(
+            "Unreported changes",
+            f"[yellow]{', '.join(result.unreported_changes)}[/yellow]" if result.unreported_changes else "[green]none[/green]",
+        )
+    if result.churn_over_budget:
+        c = result.churn_over_budget
+        bits = []
+        if "max_files" in c:
+            bits.append(f"{c.get('files')} files > {c.get('max_files')}")
+        if "max_lines" in c:
+            bits.append(f"{c.get('lines')} lines > {c.get('max_lines')}")
+        table.add_row("Churn vs budget", f"[yellow]{'; '.join(bits)}[/yellow]")
+    else:
+        table.add_row("Churn vs budget", "[green]within budget[/green]")
+
+    reasons = result.reasons()
+    if reasons:
+        table.add_row("Reasons", "\n".join(f"• {r}" for r in reasons))
+
+    console.print(Panel(
+        table,
+        title=f"sembl verify — [bold {style}]{verdict}[/bold {style}]",
+        border_style=style,
+    ))
+    sys.exit(_verify_exit_code(verdict, strict))
+
+
+def _verify_exit_code(verdict: str, strict: bool) -> int:
+    if verdict == "BLOCK":
+        return 1
+    if verdict == "WARN":
+        return 1 if strict else 0
+    return 0
 
 
 # ── sembl list ────────────────────────────────────────────────────────────────
@@ -479,7 +711,10 @@ def _print_work_order_summary(wo, out_dir: Path):
         f"[bold]Goal:[/bold] {wo.clarified_goal}",
         f"[bold]Outcome:[/bold] {wo.user_visible_outcome}",
         f"[bold]Task type:[/bold] {wo.task_type}  |  "
-        f"[bold]Risk:[/bold] [{risk_color}]{wo.risk_level.upper()}[/{risk_color}]",
+        f"[bold]Risk:[/bold] [{risk_color}]{wo.risk_level.upper()}[/{risk_color}]"
+        + (f"  |  [bold]Intent:[/bold] [yellow]{wo.intent_confidence.upper()} "
+           f"({len(wo.blocked_until_answered)} open Q)[/yellow]"
+           if wo.clarification_required else ""),
         f"",
         f"[bold]Acceptance criteria:[/bold] {len(wo.acceptance_criteria)} items",
         f"[bold]Validation commands:[/bold] {len(wo.validation_commands)} commands",
