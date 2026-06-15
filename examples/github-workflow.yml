@@ -1,0 +1,28 @@
+# Drop this in .github/workflows/sembl.yml to gate agent-authored PRs.
+# It checks the PR diff against your declared bounds and fails on a hard breach.
+name: sembl verify
+
+on:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history so the base ref can be diffed
+
+      # Option A: a checked-in bounds file
+      - uses: speedvibecode/sembl@v0.1.13
+        with:
+          bounds: bounds.json
+          strict: "false"   # advisory scope by default; set true for a hard gate
+
+      # Option B: derive bounds from a GitHub Spec Kit feature first
+      # - run: |
+      #     pip install sembl
+      #     sembl bounds --spec-kit specs/001-feature --out bounds.json
+      # - uses: speedvibecode/sembl@v0.1.13
+      #   with:
+      #     bounds: bounds.json

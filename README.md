@@ -117,6 +117,28 @@ emits; Sembl never trusts it — it only uses it to catch *contradictions* with 
 real diff. Common shapes are recognized (`files_modified`, `changes[]`,
 `tests_passed`, a `checks[]` list, …).
 
+## Gate it in CI
+
+`verify` can score a PR's diff directly — no working-tree checkout needed — so it
+drops into CI as a hard gate. Feed it a patch with `--diff` (or `--diff -` for
+stdin):
+
+```bash
+git diff origin/main...HEAD | sembl verify --wo-file bounds.json --diff - --strict
+```
+
+Or use the GitHub Action on every pull request (see
+[`examples/github-workflow.yml`](examples/github-workflow.yml)):
+
+```yaml
+- uses: actions/checkout@v4
+  with: { fetch-depth: 0 }
+- uses: speedvibecode/sembl@v0.1.13
+  with:
+    bounds: bounds.json
+    strict: "false"   # advisory by default; true for a hard scope gate
+```
+
 ## Install
 
 ```powershell

@@ -102,11 +102,12 @@ class ScopeReport:
         # Back-compat: `validate` treated forbidden/out-of-scope/fabrication as fail.
         return not self._blocking()
 
-    def to_dict(self) -> dict:
+    def to_dict(self, policy: str = "strict") -> dict:
         import dataclasses
         data = dataclasses.asdict(self)
-        data["verdict"] = self.verdict()
+        data["verdict"] = self.verdict(policy)
         data["reasons"] = self.reasons()
+        data["policy"] = policy
         return data
 
 
@@ -158,6 +159,48 @@ def validate_against_work_order(
         root, result.changed_files, work_order.get("churn_budget"), line_count,
     )
     return result
+
+
+def parse_unified_diff(text: str) -> tuple[list, int]:
+    """Parse a unified diff / .patch into (changed_files, added+deleted lines).
+
+    Lets `verify` score a PR or patch without a live checkout (CI, code review).
+    Paths come from `+++ b/<path>` (the post-image, authoritative for the new
+    name) and from `diff --git a/<old> b/<new>` headers (which also catch pure
+    renames and deletions where the post-image is /dev/null). `a/`/`b/` prefixes
+    and surrounding quotes are stripped; `/dev/null` is ignored. Line count sums
+    content `+`/`-` lines, excluding the `+++`/`---` file headers — matching the
+    numstat-based budget used in working-tree mode.
+    """
+    files: list = []
+    seen: set = set()
+    added = deleted = 0
+
+    def _add(path: str) -> None:
+        path = _strip_ab(path)
+        if path and path != "/dev/null" and path not in seen:
+            seen.add(path)
+            files.append(path)
+
+    for line in text.splitlines():
+        if line.startswith("diff --git "):
+            parts = line.split(" ")
+            if len(parts) >= 4:
+                _add(parts[-1])   # b/<new> — survives renames and deletions
+        elif line.startswith("+++ "):
+            _add(line[4:].strip().split("\t", 1)[0])
+        elif line.startswith("+") and not line.startswith("+++"):
+            added += 1
+        elif line.startswith("-") and not line.startswith("---"):
+            deleted += 1
+    return sorted(files), added + deleted
+
+
+def _strip_ab(path: str) -> str:
+    path = str(path).strip().strip('"')
+    if path[:2] in ("a/", "b/"):
+        path = path[2:]
+    return _norm(path)
 
 
 def _churn_over_budget(

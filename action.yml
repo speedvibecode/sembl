@@ -1,0 +1,50 @@
+name: "Sembl verify"
+description: "Deterministic accountability gate for AI coding agent changes — verify a PR's diff stayed in declared bounds and didn't fabricate its results."
+branding:
+  icon: "check-circle"
+  color: "green"
+
+inputs:
+  bounds:
+    description: "Path to the bounds JSON (editable_paths / forbidden_areas / churn_budget). Produce it by hand, with `sembl bounds --spec-kit`, or `sembl generate`."
+    required: true
+  report:
+    description: "Optional executor report JSON to cross-check for fabricated file claims and unevidenced test passes."
+    required: false
+    default: ""
+  strict:
+    description: "Strict gate: out-of-scope edits BLOCK (not just WARN) and any WARN fails the check."
+    required: false
+    default: "false"
+  base-ref:
+    description: "Base ref to diff against. Defaults to the PR base SHA, else the previous commit."
+    required: false
+    default: ""
+  sembl-version:
+    description: "Version specifier for the sembl package (e.g. '==0.1.13'). Empty installs the latest."
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Run sembl verify
+      shell: bash
+      run: |
+        set -euo pipefail
+        python -m pip install --quiet "sembl${{ inputs.sembl-version }}"
+
+        base="${{ inputs.base-ref }}"
+        if [ -z "$base" ]; then base="${{ github.event.pull_request.base.sha }}"; fi
+        if [ -z "$base" ]; then base="HEAD~1"; fi
+
+        # three-dot diff against the merge base when possible, else two-dot
+        git diff "$base"...HEAD > sembl.patch 2>/dev/null || git diff "$base" HEAD > sembl.patch
+
+        args=(verify --wo-file "${{ inputs.bounds }}" --diff sembl.patch)
+        if [ -n "${{ inputs.report }}" ]; then args+=(--report "${{ inputs.report }}"); fi
+        if [ "${{ inputs.strict }}" = "true" ]; then args+=(--strict); fi
+
+        echo "::group::sembl verify"
+        sembl "${args[@]}"
+        echo "::endgroup::"

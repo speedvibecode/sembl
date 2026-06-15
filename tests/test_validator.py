@@ -321,3 +321,58 @@ def test_eol_only_rewrites_are_not_edits(git_repo, monkeypatch):
     monkeypatch.setattr(v.subprocess, "run", fake_run)
     # core.py is EOL-only (in status, not in diff) -> excluded; untracked kept
     assert v._git_changed_files(git_repo) == ["httpie/ssl_.py", "notes.txt"]
+
+
+# ── parse_unified_diff (diff/patch mode for CI) ──────────────────────────────
+
+SAMPLE_DIFF = """\
+diff --git a/src/auth/login.ts b/src/auth/login.ts
+index 1111111..2222222 100644
+--- a/src/auth/login.ts
++++ b/src/auth/login.ts
+@@ -1,3 +1,4 @@
+ const x = 1;
+-const y = 2;
++const y = 3;
++const z = 4;
+diff --git a/infra/deploy.yaml b/infra/deploy.yaml
+new file mode 100644
+index 0000000..3333333
+--- /dev/null
++++ b/infra/deploy.yaml
+@@ -0,0 +1,1 @@
++image: app:latest
+"""
+
+
+def test_parse_unified_diff_paths_and_linecount():
+    from sembl.validator import parse_unified_diff
+    files, lines = parse_unified_diff(SAMPLE_DIFF)
+    assert files == ["infra/deploy.yaml", "src/auth/login.ts"]
+    # 3 added (+y, +z, +image) + 1 deleted (-y) = 4
+    assert lines == 4
+
+
+def test_parse_unified_diff_handles_deletion():
+    from sembl.validator import parse_unified_diff
+    deletion = (
+        "diff --git a/old/gone.py b/old/gone.py\n"
+        "deleted file mode 100644\n"
+        "--- a/old/gone.py\n"
+        "+++ /dev/null\n"
+        "@@ -1,2 +0,0 @@\n"
+        "-a\n-b\n"
+    )
+    files, lines = parse_unified_diff(deletion)
+    assert files == ["old/gone.py"]   # /dev/null ignored, path kept from header
+    assert lines == 2
+
+
+def test_verify_diff_mode_matches_worktree_logic():
+    from sembl.validator import parse_unified_diff
+    wo = {"editable_paths": ["src/auth/"], "forbidden_areas": ["infra/"]}
+    files, lines = parse_unified_diff(SAMPLE_DIFF)
+    result = validate_against_work_order(".", wo, changed_files=files, diff_line_count=lines)
+    assert "src/auth/login.ts" in result.in_scope
+    assert "infra/deploy.yaml" in result.forbidden_hits
+    assert result.verdict("advisory_scope") == "BLOCK"   # forbidden hit blocks

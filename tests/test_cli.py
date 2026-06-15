@@ -48,17 +48,24 @@ class VerifyCommandTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 0)
         self.assertIn("PASS", result.output)
 
-    def test_block_on_out_of_scope_change(self):
+    def test_out_of_scope_warns_by_default_blocks_with_strict(self):
+        # Advisory-scope is the default: an out-of-scope edit WARNs (exit 0) so
+        # loose/auto bounds don't false-block legit related changes. --strict
+        # promotes scope to a hard BLOCK (exit 1).
         runner = CliRunner()
         with TemporaryDirectory() as tmp:
             repo = Path(tmp)
             _init_repo(repo)
             wo = _write_wo(repo)
             (repo / "src" / "b.py").write_text("CHANGED\n", encoding="utf-8")
-            result = runner.invoke(cli.main,
+            plain = runner.invoke(cli.main,
                 ["verify", "--repo", tmp, "--wo-file", str(wo)])
-        self.assertEqual(result.exit_code, 1)
-        self.assertIn("BLOCK", result.output)
+            strict = runner.invoke(cli.main,
+                ["verify", "--repo", tmp, "--wo-file", str(wo), "--strict"])
+        self.assertEqual(plain.exit_code, 0)
+        self.assertIn("WARN", plain.output)
+        self.assertEqual(strict.exit_code, 1)
+        self.assertIn("BLOCK", strict.output)
 
     def test_json_output_shape(self):
         runner = CliRunner()
@@ -69,10 +76,37 @@ class VerifyCommandTests(unittest.TestCase):
             (repo / "src" / "b.py").write_text("CHANGED\n", encoding="utf-8")
             result = runner.invoke(cli.main,
                 ["verify", "--repo", tmp, "--wo-file", str(wo), "--json"])
+            strict = runner.invoke(cli.main,
+                ["verify", "--repo", tmp, "--wo-file", str(wo), "--json", "--strict"])
         payload = json.loads(result.output)
-        self.assertEqual(payload["verdict"], "BLOCK")
+        self.assertEqual(payload["verdict"], "WARN")          # advisory default
+        self.assertEqual(payload["policy"], "advisory_scope")
         self.assertIn("src/b.py", payload["out_of_scope"])
         self.assertTrue(payload["reasons"])
+        self.assertEqual(json.loads(strict.output)["verdict"], "BLOCK")  # --strict
+
+    def test_diff_mode_verifies_a_patch_without_worktree(self):
+        # CI path: a patch file is scored directly; no working-tree edits needed.
+        runner = CliRunner()
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            _init_repo(repo)
+            wo = _write_wo(repo)  # editable: src/a.py
+            patch = repo / "pr.patch"
+            patch.write_text(
+                "diff --git a/src/b.py b/src/b.py\n"
+                "--- a/src/b.py\n+++ b/src/b.py\n"
+                "@@ -1 +1 @@\n-x\n+y\n",
+                encoding="utf-8",
+            )
+            warn = runner.invoke(cli.main,
+                ["verify", "--repo", tmp, "--wo-file", str(wo), "--diff", str(patch), "--json"])
+            strict = runner.invoke(cli.main,
+                ["verify", "--repo", tmp, "--wo-file", str(wo), "--diff", str(patch), "--strict"])
+        payload = json.loads(warn.output)
+        self.assertIn("src/b.py", payload["changed_files"])
+        self.assertEqual(payload["verdict"], "WARN")      # out-of-scope, advisory
+        self.assertEqual(strict.exit_code, 1)             # --strict blocks it
 
     def test_strict_promotes_warn_to_failure(self):
         runner = CliRunner()

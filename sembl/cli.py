@@ -435,11 +435,16 @@ def validate(repo, wo_id, wo_file, report_file):
 @click.option("--report", "report_file", default=None,
               type=click.Path(exists=True),
               help="Executor report (JSON) to cross-check against the real diff.")
+@click.option("--diff", "diff_file", default=None,
+              type=click.Path(exists=True, allow_dash=True),
+              help="A unified diff / .patch to verify instead of the working tree "
+                   "(for CI / code review — no checkout needed). Use '-' for stdin.")
 @click.option("--json", "as_json", is_flag=True, default=False,
               help="Emit the full verdict as JSON (for tooling / experiments).")
 @click.option("--strict", is_flag=True, default=False,
-              help="Treat WARN as a failing exit code (for CI gating).")
-def verify(repo, wo_id, wo_file, report_file, as_json, strict):
+              help="Strict gate: out-of-scope edits BLOCK (not just WARN), and any "
+                   "WARN becomes a failing exit code. Use in CI for a hard gate.")
+def verify(repo, wo_id, wo_file, report_file, diff_file, as_json, strict):
     """Verify the actual diff against a Work Order and return a PASS/WARN/BLOCK verdict.
 
     The change-control verdict layer: deterministic checks only — scope adherence,
@@ -447,10 +452,15 @@ def verify(repo, wo_id, wo_file, report_file, as_json, strict):
     size budget, and validation claimed-but-not-evidenced. No maintainability
     judgement. Self-reports are never trusted.
 
+    By default scope is advisory: out-of-scope edits WARN, and only forbidden-area
+    edits and fabricated claims BLOCK — auto/loose bounds otherwise cause false
+    blocks on legitimate related changes (config, manifests). Pass --strict to make
+    out-of-scope a hard BLOCK and fail on any WARN.
+
     Exit codes: PASS=0, WARN=0 (1 with --strict), BLOCK=1.
     """
     import json as _json
-    from .validator import validate_against_work_order, load_report
+    from .validator import validate_against_work_order, load_report, parse_unified_diff
 
     repo_path = Path(repo).resolve()
     if wo_file:
@@ -471,11 +481,22 @@ def verify(repo, wo_id, wo_file, report_file, as_json, strict):
             console.print(f"[red]Could not parse executor report:[/red] {error}")
             sys.exit(1)
 
-    result = validate_against_work_order(str(repo_path), work_order, report)
-    verdict = result.verdict()
+    # Diff mode (CI / code review): score a patch directly, no working tree needed.
+    changed_files = diff_lines = None
+    if diff_file:
+        diff_text = sys.stdin.read() if diff_file == "-" else Path(diff_file).read_text(
+            encoding="utf-8", errors="replace")
+        changed_files, diff_lines = parse_unified_diff(diff_text)
+
+    policy = "strict" if strict else "advisory_scope"
+    result = validate_against_work_order(
+        str(repo_path), work_order, report,
+        changed_files=changed_files, diff_line_count=diff_lines,
+    )
+    verdict = result.verdict(policy)
 
     if as_json:
-        click.echo(_json.dumps(result.to_dict(), indent=2))
+        click.echo(_json.dumps(result.to_dict(policy), indent=2))
         sys.exit(_verify_exit_code(verdict, strict))
 
     style = {"PASS": "green", "WARN": "yellow", "BLOCK": "red"}[verdict]
