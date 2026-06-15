@@ -1,1 +1,0 @@
-﻿(agent stopped on scope conflict - no changes)

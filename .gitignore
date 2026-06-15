@@ -28,6 +28,10 @@ benchmarks/
 HANDOFF.md
 Sembl-Product-Brief.docx
 
+# Local research vault (Obsidian notes + downloaded source papers) — kept local,
+# not shipped in the public package repo.
+sembl-research-markdown/
+
 # OS/editor
 .DS_Store
 Thumbs.db

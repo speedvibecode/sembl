@@ -1,7 +1,0 @@
-1. Changed HTTPS adapter to use `requests` default SSL/CA handling for plain HTTPS requests, only creating a custom `SSLContext` when `--ssl` or `--ciphers` is used.
-
-2. Modified files: `httpie/ssl_.py`
-
-3. Validation: `.venv\Scripts\python.exe -m pytest tests/test_ssl.py -q` attempted, but Python could not start due to environment error: `windows sandbox: spawn setup refresh`. Retried with absolute paths from `C:\tmp`; same error.
-
-4. Blockers: validation was blocked by the Windows sandbox process-start failure, not by a pytest failure.

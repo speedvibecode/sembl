@@ -1,6 +1,0 @@
-{
-  "reference_fix": "https://github.com/httpie/cli/pull/1596",
-  "primary": ["httpie/ssl_.py"],
-  "secondary": ["setup.cfg"],
-  "notes": "Reference fix: load_default_certs() fallback in HTTPieHTTPSAdapter.__init__ (httpie/ssl_.py, +7 lines) plus dropping the temporary requests<2.32.3 pin in setup.cfg. Any solution touching files outside these is out-of-scope unless justified (e.g. adding a test in tests/test_ssl.py is acceptable, not penalized)."
-}
