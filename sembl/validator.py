@@ -31,6 +31,15 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# Default scope tolerance (EXP-05, 437 merged PRs): WARN only when MORE THAN a
+# quarter of the changed files fall outside declared scope. A fraction scales with
+# PR size; a fixed count does not (allowing "1 file" hides a wholesale wrong-area
+# change on the many small PRs). At 0.25 the false-alarm rate on good-but-imperfect
+# bounds drops to ~0 while genuine wholesale violations are still caught ~81% of the
+# time. A contract can override with its own `scope_tolerance`, or set it to `{}`
+# for zero tolerance (any out-of-scope edit counts).
+DEFAULT_SCOPE_TOLERANCE = {"max_fraction": 0.25}
+
 
 @dataclass
 class ScopeReport:
@@ -48,23 +57,48 @@ class ScopeReport:
     churn_over_budget: dict = field(default_factory=dict)
     # Validation-not-actually-run: checks claimed-passed with no acceptable evidence.
     validation_not_run: list = field(default_factory=list)
+    # Optional scope tolerance from the contract (see _scope_exceeds).
+    scope_tolerance: dict = field(default_factory=dict)
+
+    def _scope_exceeds(self) -> bool:
+        # Whether out-of-scope edits should count toward the verdict. EXP-04/05
+        # (437 merged PRs) showed an all-or-nothing scope rule false-alarms on
+        # ~94% of legitimate merges: real changes touch a few files no declared
+        # bound named (a helper, an incidental edit). docs/changelog/test/generated
+        # are already absorbed at classification time; on top of that scope counts
+        # only once out-of-scope edits exceed `scope_tolerance` (DEFAULT_SCOPE_
+        # TOLERANCE unless the contract overrides). An explicit `{}` means zero
+        # tolerance — any out-of-scope edit counts.
+        oos = len(self.out_of_scope)
+        if oos == 0:
+            return False
+        tol = self.scope_tolerance or {}
+        if not tol:
+            return True
+        total = len(self.changed_files) or 1
+        within = True
+        if "max_files" in tol and oos > tol["max_files"]:
+            within = False
+        if "max_fraction" in tol and (oos / total) > tol["max_fraction"]:
+            within = False
+        return not within
 
     # Hard contract breaches → BLOCK.
     def _blocking(self, policy: str = "strict") -> bool:
-        # "strict" (default): any out-of-scope edit BLOCKs.
+        # "strict" (default): out-of-scope edits (beyond tolerance) BLOCK.
         # "advisory_scope": out-of-scope edits demote to WARN; only forbidden hits
-        #   and fabricated claims BLOCK. (Candidate fix — scope becomes advisory
-        #   because auto-generated editable_paths aren't precise enough to gate on.)
+        #   and fabricated claims BLOCK. (Scope is advisory because declared
+        #   editable_paths are rarely complete enough to gate on — see EXP-04/05.)
         hard = bool(self.forbidden_hits or self.fabricated_claims)
         if policy == "advisory_scope":
             return hard
-        return hard or bool(self.out_of_scope)
+        return hard or self._scope_exceeds()
 
     # Soft signals → WARN.
     def _warning(self, policy: str = "strict") -> bool:
         soft = bool(self.churn_over_budget or self.validation_not_run or self.unreported_changes)
         if policy == "advisory_scope":
-            soft = soft or bool(self.out_of_scope)
+            soft = soft or self._scope_exceeds()
         return soft
 
     def verdict(self, policy: str = "strict") -> str:
@@ -137,10 +171,19 @@ def validate_against_work_order(
     else:
         result.changed_files = _git_changed_files(root)
 
+    if "scope_tolerance" in work_order:
+        result.scope_tolerance = dict(work_order.get("scope_tolerance") or {})
+    else:
+        result.scope_tolerance = dict(DEFAULT_SCOPE_TOLERANCE)
     for path in result.changed_files:
         if _matches_any(path, forbidden) and not _matches_any(path, editable):
             result.forbidden_hits.append(path)
-        elif _matches_any(path, editable) or _looks_like_test(path) or _looks_like_generated(path):
+        elif (
+            _matches_any(path, editable)
+            or _looks_like_test(path)
+            or _looks_like_generated(path)
+            or _looks_like_docs(path)
+        ):
             result.in_scope.append(path)
         else:
             result.out_of_scope.append(path)
@@ -526,5 +569,32 @@ def _looks_like_generated(path: str) -> bool:
     if any(seg in _GENERATED_DIRS for seg in segments[:-1]):
         return True
     if lower.endswith(_GENERATED_SUFFIXES):
+        return True
+    return False
+
+
+# Docs and changelogs travel with almost every legitimate change (a fix updates
+# CHANGES.rst; a feature touches docs/). EXP-04 showed they are the single biggest
+# source of scope false-alarms on real merged PRs, so — like tests and generated
+# files — they are in-scope unless explicitly forbidden. Kept deliberately narrow:
+# a docs/ directory, a changelog-family file anywhere, or a top-level README/prose
+# .md/.rst — NOT arbitrary markdown buried in source.
+_DOC_DIRS = frozenset({"docs", "doc"})
+_CHANGELOG_STEMS = frozenset({
+    "changelog", "changes", "history", "news",
+    "release-notes", "releasenotes", "releases",
+})
+
+
+def _looks_like_docs(path: str) -> bool:
+    lower = path.lower()
+    segments = lower.split("/")
+    if any(seg in _DOC_DIRS for seg in segments[:-1]):
+        return True
+    name = segments[-1]
+    stem = name.rsplit(".", 1)[0]
+    if stem in _CHANGELOG_STEMS:
+        return True
+    if len(segments) == 1 and name.endswith((".md", ".rst")):
         return True
     return False

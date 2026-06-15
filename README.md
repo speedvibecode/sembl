@@ -155,12 +155,20 @@ command. Full recipes: [`docs/integrations.md`](docs/integrations.md).
 - **pre-commit** — gate local commits:
   ```yaml
   - repo: https://github.com/speedvibecode/sembl
-    rev: v0.1.15
+    rev: v0.1.17
     hooks: [{ id: sembl-verify }]
   ```
 - **Agent harnesses** — run verify the moment the agent stops editing. Claude Code
   (`Stop` hook), Aider (`--test-cmd`), OpenCode (post-edit hook), or any harness
   that can run a shell command. See [`examples/`](examples/).
+- **MCP** — let an agent (or an orchestrator supervising a sub-agent) call the gate
+  with no shell: it hands over a diff + what it declared, and gets back the
+  PASS/WARN/BLOCK verdict. The general case for *main-agent-verifies-sub-agent*.
+  ```bash
+  pip install "sembl[mcp]"     # then run: sembl-mcp  (stdio)
+  ```
+  Tools: `verify_change`, `bounds_from_spec`, `list_presets`. See
+  [`docs/integrations.md`](docs/integrations.md).
 
 ## Install
 

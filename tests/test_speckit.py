@@ -46,6 +46,23 @@ def test_extract_paths_ignores_urls():
     assert extract_paths(text) == ["src/real.py"]
 
 
+def test_extract_paths_rejects_version_strings_and_useragents():
+    # EXP-04: prose carries version/UA tokens (`Werkzeug/2.2.2`, `Python/3.10.4`,
+    # `HTTP/1.1`, `Chrome/65.0.3325.183`) that the old regex matched as files. A
+    # letter-led extension rejects them while keeping real paths.
+    text = ("Repro on Werkzeug/2.2.2 with Python/3.10.4 over HTTP/1.1 in "
+            "Chrome/65.0.3325.183 — the bug is in src/flask/app.py")
+    assert extract_paths(text) == ["src/flask/app.py"]
+
+
+def test_extract_paths_root_validation_filters_nonexistent(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "real.py").write_text("x = 1\n", encoding="utf-8")
+    text = "edit src/real.py and src/ghost.py"
+    assert extract_paths(text) == ["src/real.py", "src/ghost.py"]      # no root: regex only
+    assert extract_paths(text, root=tmp_path) == ["src/real.py"]       # root: must exist
+
+
 def test_bounds_shape_and_grounded_budget():
     bounds = bounds_from_tasks_text(SAMPLE_TASKS)
     assert bounds["editable_paths"]  # non-empty

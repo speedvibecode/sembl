@@ -109,6 +109,44 @@ rather not touch the working tree:
 git diff | sembl verify --wo-file bounds.json --diff -
 ```
 
+## MCP (agents & sub-agent supervision)
+
+Let an agent call the gate with no shell. Install the extra and run the server:
+
+```bash
+pip install "sembl[mcp]"
+sembl-mcp            # speaks MCP over stdio
+```
+
+Register it with any MCP client (Claude Code, etc.). It exposes three tools:
+
+- **`verify_change`** — the gate. Pass a unified `diff` (no checkout needed) plus
+  `editable_paths` / `forbidden_areas` / `churn_budget` (or a `bounds_file`) and an
+  optional `report` of what the actor claims it did. Returns the PASS/WARN/BLOCK
+  verdict and per-check findings.
+- **`bounds_from_spec`** — derive bounds from a Spec Kit `tasks.md` (text or path)
+  or a preset.
+- **`list_presets`** — the available declarative bounds presets.
+
+**Main-agent-verifies-sub-agent** (the general case, no external tool): the
+sub-agent declares the files it will touch and reports what it did; the orchestrator
+calls `verify_change(diff=…, editable_paths=…, report=…)` and trusts the
+deterministic verdict instead of the sub-agent's self-report:
+
+```jsonc
+// verify_change arguments
+{
+  "diff": "<the sub-agent's patch>",
+  "editable_paths": ["src/auth/"],          // what it said it would touch
+  "forbidden_areas": ["migrations/"],
+  "report": { "changed_files": ["src/auth/login.ts"], "tests_passed": true }
+}
+```
+
+This catches a sub-agent that edits outside its declared files, touches a forbidden
+area, claims a file it never changed, or says "tests passed" with no evidence —
+deterministically, with no second LLM in the loop.
+
 ## The one command underneath
 
 Every integration above is a trigger for:

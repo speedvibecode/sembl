@@ -16,7 +16,8 @@ executor report.
 {
   "editable_paths": ["src/auth/", "src/api/routes/login.ts"],
   "forbidden_areas": ["migrations/", "infra/", ".github/"],
-  "churn_budget": { "max_files": 6, "max_lines": 200 }
+  "churn_budget": { "max_files": 6, "max_lines": 200 },
+  "scope_tolerance": { "max_fraction": 0.25 }
 }
 ```
 
@@ -26,10 +27,22 @@ executor report.
 | `forbidden_areas` | list of path prefixes | files the change must **not** touch. A changed file here is a **forbidden hit** (→ BLOCK), unless it's also explicitly in `editable_paths`. |
 | `churn_budget.max_files` | int ≥ 0 | soft cap on number of changed files (→ WARN if exceeded). Omit to skip. |
 | `churn_budget.max_lines` | int ≥ 0 | soft cap on added+deleted lines (→ WARN if exceeded). Omit to skip. |
+| `scope_tolerance.max_files` / `.max_fraction` | int / float | how much incidental out-of-scope creep is allowed before scope counts toward the verdict. Optional — defaults to `{ "max_fraction": 0.25 }`. Set to `{}` for zero tolerance. |
 
 Paths are prefix-matched on normalized POSIX form: `src/auth/` matches
-`src/auth/login.ts`. Tests are always treated as in-scope alongside edits, so you
-don't have to enumerate test files in `editable_paths`.
+`src/auth/login.ts`. Tests, generated/lockfiles, and docs/changelogs are always
+treated as in-scope alongside edits, so you don't have to enumerate them in
+`editable_paths`.
+
+**Why `scope_tolerance` exists.** Measured on 437 real human-merged PRs, an
+all-or-nothing scope rule WARNed on ~94% of legitimate merges — real changes touch
+a file or two no declared bound named (a helper, an incidental edit). A small
+fraction-based tolerance (default: a quarter of the changed files) absorbs that
+incidental creep while still catching wholesale "wrong area" changes. Scope stays
+**advisory** regardless; it is only as good as the bounds it's given, so feed it a
+precise source (a Spec Kit `tasks.md`, a hand-written `bounds.json`) — not a vague
+issue. The four claim-vs-reality checks (forbidden / fabrication / validation /
+churn) need no bounds at all and carry the gate.
 
 Any extra keys (a full `work-order.json` has many) are ignored by `verify`, so a
 Work Order produced by `sembl generate` works as a bounds file unchanged.

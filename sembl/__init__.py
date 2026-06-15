@@ -3,4 +3,4 @@ Sembl — a deterministic accountability gate for AI coding agents.
 Verify an agent's diff stayed in declared bounds and didn't fake its results.
 """
 
-__version__ = "0.1.16"  # x-release-please-version
+__version__ = "0.1.17"  # x-release-please-version

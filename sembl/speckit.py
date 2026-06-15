@@ -22,13 +22,24 @@ import re
 from pathlib import Path
 
 # A concrete file path: one or more "segment/" parts followed by "name.ext".
-# Matched inside backticks or bare prose. Conservative on purpose — we want
-# real paths, not every slash-containing token.
-_PATH_RE = re.compile(r"(?<![\w./-])((?:[\w.-]+/)+[\w.-]+\.[A-Za-z0-9]+)")
+# Matched inside backticks or bare prose. Conservative on purpose — we want real
+# paths, not every slash-containing token. The extension must begin with a letter
+# (`[A-Za-z][A-Za-z0-9]{0,9}`): this is what separates `src/models/user.py` from
+# version strings and user-agents like `Werkzeug/2.2.2`, `Python/3.10.4`,
+# `HTTP/1.1`, `Chrome/65.0.3325.183`, which EXP-04 showed the old `[A-Za-z0-9]+`
+# extension happily matched as if they were files.
+_PATH_RE = re.compile(r"(?<![\w./-])((?:[\w.-]+/)+[\w.-]+\.[A-Za-z][A-Za-z0-9]{0,9})")
 
 
-def extract_paths(text: str) -> list[str]:
-    """Extract unique, order-preserved file paths from Spec Kit task text."""
+def extract_paths(text: str, root: "Path | str | None" = None) -> list[str]:
+    """Extract unique, order-preserved file paths from spec / task text.
+
+    When `root` is given, candidates are kept only if they resolve to a real file
+    under it — the strongest defence against junk bounds. With no `root` (scoring
+    free-form issue/PR text where the tree isn't to hand) the regex's letter-led
+    extension is the guard.
+    """
+    base = Path(root) if root is not None else None
     seen: set[str] = set()
     out: list[str] = []
     for match in _PATH_RE.finditer(text):
@@ -38,6 +49,8 @@ def extract_paths(text: str) -> list[str]:
         # Drop obvious non-source noise (URLs already excluded by the lack of a
         # scheme in the regex; skip markdown image/link artifacts just in case).
         if path.startswith(("http:", "https:")):
+            continue
+        if base is not None and not (base / path).is_file():
             continue
         seen.add(path)
         out.append(path)

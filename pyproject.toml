@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sembl"
-version = "0.1.16"
+version = "0.1.17"
 description = "A deterministic accountability gate for AI coding agents — verify a diff stayed in declared bounds and didn't fake its results"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -48,6 +48,9 @@ Repository = "https://github.com/speedvibecode/sembl"
 Issues = "https://github.com/speedvibecode/sembl/issues"
 
 [project.optional-dependencies]
+mcp = [
+    "mcp>=1.2.0",
+]
 graph = [
     "graphifyy>=0.8.0",
 ]
@@ -61,6 +64,7 @@ graph-pipeline = [
 
 [project.scripts]
 sembl = "sembl.cli:main"
+sembl-mcp = "sembl.mcp_server:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

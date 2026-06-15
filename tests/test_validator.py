@@ -435,3 +435,62 @@ def test_validation_not_run_detects_camelcase_claim():
         ".", wo, report=report, changed_files=["src/a.py"],
     )
     assert "testsPassed" in result.validation_not_run
+
+
+def test_docs_and_changelog_are_in_scope_not_out():
+    # EXP-04: docs/changelog co-change with almost every fix; they must not
+    # false-flag as out-of-scope (the single biggest real false-alarm source).
+    wo = {"editable_paths": ["src/"], "forbidden_areas": []}
+    result = validate_against_work_order(
+        ".", wo,
+        changed_files=["src/app.py", "CHANGES.rst", "docs/guide/usage.md",
+                       "README.md", "HISTORY.rst"],
+    )
+    assert result.out_of_scope == []
+    for p in ("CHANGES.rst", "docs/guide/usage.md", "README.md", "HISTORY.rst"):
+        assert p in result.in_scope
+
+
+def test_buried_markdown_in_source_is_still_out_of_scope():
+    # The docs allowance is narrow: arbitrary .md inside source is NOT a free pass.
+    wo = {"editable_paths": ["src/"]}
+    result = validate_against_work_order(
+        ".", wo, changed_files=["lib/secret/notes.md"],
+    )
+    assert "lib/secret/notes.md" in result.out_of_scope
+
+
+def test_default_scope_tolerance_is_fraction_based():
+    # Default = max_fraction 0.25 (EXP-05). A single out-of-scope file in a small
+    # change still WARNs (1/2 = 0.5 > 0.25); the same incidental file inside a
+    # larger change is tolerated (1/5 = 0.2 <= 0.25). Scales with PR size.
+    small = ["src/a.py", "lib/helper.py"]
+    assert validate_against_work_order(
+        ".", {"editable_paths": ["src/"]}, changed_files=small
+    ).verdict("advisory_scope") == "WARN"
+
+    larger = ["src/a.py", "src/b.py", "src/c.py", "src/d.py", "lib/helper.py"]
+    r = validate_against_work_order(".", {"editable_paths": ["src/"]}, changed_files=larger)
+    assert r.out_of_scope == ["lib/helper.py"]          # still reported as a fact
+    assert r.verdict("advisory_scope") == "PASS"        # but within default tolerance
+
+
+def test_explicit_empty_tolerance_means_zero_tolerance():
+    # A contract can opt back into strict-per-file by setting scope_tolerance: {}.
+    files = ["src/a.py", "src/b.py", "src/c.py", "src/d.py", "lib/helper.py"]
+    wo = {"editable_paths": ["src/"], "scope_tolerance": {}}
+    r = validate_against_work_order(".", wo, changed_files=files)
+    assert r.verdict("advisory_scope") == "WARN"        # any OOS counts
+    assert r.verdict("strict") == "BLOCK"
+
+
+def test_scope_tolerance_override_max_files():
+    files = ["src/a.py", "lib/helper.py"]               # 1 OOS, small change
+    tol = {"editable_paths": ["src/"], "scope_tolerance": {"max_files": 1}}
+    lenient = validate_against_work_order(".", tol, changed_files=files)
+    assert lenient.out_of_scope == ["lib/helper.py"]
+    assert lenient.verdict("advisory_scope") == "PASS"  # within explicit tolerance
+
+    files3 = ["src/a.py", "lib/x.py", "other/y.py"]     # 2 OOS > max_files 1
+    over = validate_against_work_order(".", tol, changed_files=files3)
+    assert over.verdict("advisory_scope") == "WARN"
