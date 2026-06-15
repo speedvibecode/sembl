@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sembl"
-version = "0.1.13"
+version = "0.1.14"
 description = "A deterministic accountability gate for AI coding agents — verify a diff stayed in declared bounds and didn't fake its results"
 readme = "README.md"
 requires-python = ">=3.10"

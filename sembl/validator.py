@@ -140,7 +140,7 @@ def validate_against_work_order(
     for path in result.changed_files:
         if _matches_any(path, forbidden) and not _matches_any(path, editable):
             result.forbidden_hits.append(path)
-        elif _matches_any(path, editable) or _looks_like_test(path):
+        elif _matches_any(path, editable) or _looks_like_test(path) or _looks_like_generated(path):
             result.in_scope.append(path)
         else:
             result.out_of_scope.append(path)
@@ -175,6 +175,8 @@ def parse_unified_diff(text: str) -> tuple[list, int]:
     files: list = []
     seen: set = set()
     added = deleted = 0
+    last_a = ""           # most recent `--- a/<path>` (post-image may be /dev/null)
+    cur_generated = False  # don't count churn lines for generated/lockfiles
 
     def _add(path: str) -> None:
         path = _strip_ab(path)
@@ -187,12 +189,20 @@ def parse_unified_diff(text: str) -> tuple[list, int]:
             parts = line.split(" ")
             if len(parts) >= 4:
                 _add(parts[-1])   # b/<new> — survives renames and deletions
+        elif line.startswith("--- "):
+            last_a = _strip_ab(line[4:].strip().split("\t", 1)[0])
         elif line.startswith("+++ "):
-            _add(line[4:].strip().split("\t", 1)[0])
+            post = line[4:].strip().split("\t", 1)[0]
+            _add(post)
+            # a deletion's post-image is /dev/null — fall back to the pre-image path
+            cur = _strip_ab(post) if post.strip() != "/dev/null" else last_a
+            cur_generated = _looks_like_generated(cur) if cur else False
         elif line.startswith("+") and not line.startswith("+++"):
-            added += 1
+            if not cur_generated:
+                added += 1
         elif line.startswith("-") and not line.startswith("---"):
-            deleted += 1
+            if not cur_generated:
+                deleted += 1
     return sorted(files), added + deleted
 
 
@@ -216,9 +226,11 @@ def _churn_over_budget(
     if not isinstance(budget, dict) or not budget:
         return {}
     over: dict = {}
+    # Churn measures human-authored change: generated/lockfiles don't count.
+    counted = [f for f in changed_files if not _looks_like_generated(f)]
     max_files = budget.get("max_files")
-    if isinstance(max_files, int) and max_files >= 0 and len(changed_files) > max_files:
-        over["files"] = len(changed_files)
+    if isinstance(max_files, int) and max_files >= 0 and len(counted) > max_files:
+        over["files"] = len(counted)
         over["max_files"] = max_files
     max_lines = budget.get("max_lines")
     if isinstance(max_lines, int) and max_lines >= 0:
@@ -334,6 +346,8 @@ def _git_diff_numstat(root: Path) -> int:
         path = _norm(path.strip().strip('"'))
         if path == ".sembl" or path.startswith((".sembl/", "graphify-out/")):
             continue
+        if _looks_like_generated(path):
+            continue
         for col in (added, deleted):
             if col.isdigit():
                 total += int(col)
@@ -376,16 +390,19 @@ def _claimed_validations(report: dict) -> list:
     # Top-level boolean / string success flags. Evidence (if any) lives at top level.
     top_evidenced = _has_evidence(report)
     for key in ("tests_passed", "all_tests_pass", "all_tests_passed",
-                "validation_passed", "checks_passed", "tests_pass"):
+                "validation_passed", "checks_passed", "tests_pass",
+                "testsPassed", "allTestsPassed", "validationPassed", "checksPassed"):
         if key in report and _truthy_pass(report.get(key)):
             out.append((key, True, top_evidenced))
-    for key in ("validation", "tests", "test_status", "validation_status", "status"):
+    for key in ("validation", "tests", "test_status", "validation_status", "status",
+                "testStatus", "validationStatus"):
         value = report.get(key)
         if isinstance(value, str) and _truthy_pass(value):
             out.append((key, True, top_evidenced))
 
     # Structured check lists.
-    for list_key in ("checks", "validations", "validation_results", "test_results"):
+    for list_key in ("checks", "validations", "validation_results", "test_results",
+                     "testResults", "validationResults", "checkResults"):
         items = report.get(list_key)
         if not isinstance(items, list):
             continue
@@ -402,19 +419,35 @@ def _claimed_validations(report: dict) -> list:
 
 
 def _claimed_files(report: dict) -> list:
-    """Extract claimed-modified files from common executor report shapes."""
+    """Extract claimed-modified files from common executor report shapes.
+
+    Covers the shapes Claude Code / Cursor / Aider / generic harnesses emit:
+    flat string lists under many key spellings (snake + camel), and a `changes`
+    field that may be a list of strings, a list of {file: ...} objects, or a dict
+    keyed by filename.
+    """
     claimed = []
-    for key in ("files_modified", "files_changed", "files_modified_or_created", "files"):
+    list_keys = (
+        "files_modified", "files_changed", "files_modified_or_created", "files",
+        "modified_files", "created_files", "edited_files", "added_files",
+        "touched_files", "changed_files", "file_changes",
+        "filesChanged", "changedFiles", "modifiedFiles", "editedFiles",
+    )
+    for key in list_keys:
         value = report.get(key)
         if isinstance(value, list):
-            claimed.extend(str(item) for item in value if isinstance(item, (str,)))
+            claimed.extend(str(item) for item in value if isinstance(item, str))
     changes = report.get("changes")
     if isinstance(changes, list):
         for item in changes:
-            if isinstance(item, dict) and isinstance(item.get("file"), str):
-                claimed.append(item["file"])
+            if isinstance(item, dict) and isinstance(item.get("file") or item.get("path"), str):
+                claimed.append(item.get("file") or item.get("path"))
             elif isinstance(item, str) and ":" in item:
                 claimed.append(item.split(":", 1)[0])
+            elif isinstance(item, str):
+                claimed.append(item)
+    elif isinstance(changes, dict):
+        claimed.extend(str(k) for k in changes.keys())
     seen, result = set(), []
     for path in claimed:
         path = path.strip()
@@ -462,3 +495,36 @@ def _looks_like_test(path: str) -> bool:
             "_test.py", "_test.go",
         ))
     )
+
+
+# Machine-produced files: lockfiles, vendored/build output, codegen. They change
+# alongside legitimate work (a dep bump rewrites a lockfile) and can be huge, so
+# they shouldn't false-flag as out-of-scope or dominate the churn budget. Treated
+# like tests for scope (in-scope unless explicitly forbidden) and excluded from
+# the churn count — but a forbidden-area rule still wins over this.
+_LOCKFILES = frozenset({
+    "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "npm-shrinkwrap.json",
+    "poetry.lock", "pdm.lock", "uv.lock", "cargo.lock", "go.sum", "composer.lock",
+    "gemfile.lock", "packages.lock.json", "flake.lock", "bun.lockb",
+})
+_GENERATED_DIRS = frozenset({
+    "node_modules", "vendor", "dist", "build", ".next", "__generated__",
+    "__snapshots__", "generated",
+})
+_GENERATED_SUFFIXES = (
+    ".min.js", ".min.css", ".map", ".pb.go", "_pb2.py", "_pb2.pyi",
+    ".g.dart", ".freezed.dart", ".generated.ts",
+)
+
+
+def _looks_like_generated(path: str) -> bool:
+    lower = path.lower()
+    segments = lower.split("/")
+    name = segments[-1]
+    if name in _LOCKFILES:
+        return True
+    if any(seg in _GENERATED_DIRS for seg in segments[:-1]):
+        return True
+    if lower.endswith(_GENERATED_SUFFIXES):
+        return True
+    return False

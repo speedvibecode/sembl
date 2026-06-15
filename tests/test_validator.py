@@ -376,3 +376,62 @@ def test_verify_diff_mode_matches_worktree_logic():
     assert "src/auth/login.ts" in result.in_scope
     assert "infra/deploy.yaml" in result.forbidden_hits
     assert result.verdict("advisory_scope") == "BLOCK"   # forbidden hit blocks
+
+
+# ── diff robustness: generated/lockfiles ─────────────────────────────────────
+
+def test_lockfile_and_generated_are_in_scope_not_out():
+    wo = {"editable_paths": ["src/"], "forbidden_areas": []}
+    result = validate_against_work_order(
+        ".", wo,
+        changed_files=["src/app.py", "package-lock.json", "dist/bundle.min.js",
+                       "api/__generated__/client.ts"],
+    )
+    assert result.out_of_scope == []                 # none false-flagged
+    assert "package-lock.json" in result.in_scope
+    assert "dist/bundle.min.js" in result.in_scope
+
+
+def test_forbidden_still_wins_over_generated():
+    wo = {"editable_paths": ["src/"], "forbidden_areas": ["vendor/"]}
+    result = validate_against_work_order(
+        ".", wo, changed_files=["vendor/pkg/lib.go"],
+    )
+    assert "vendor/pkg/lib.go" in result.forbidden_hits
+
+
+def test_churn_excludes_generated_lines():
+    # A massive lockfile diff must not trip a small line budget.
+    big_lock = "diff --git a/poetry.lock b/poetry.lock\n--- a/poetry.lock\n+++ b/poetry.lock\n"
+    big_lock += "".join(f"+dep-{i} = 1.0\n" for i in range(500))
+    from sembl.validator import parse_unified_diff
+    files, lines = parse_unified_diff(big_lock)
+    assert files == ["poetry.lock"]
+    assert lines == 0                                 # generated lines not counted
+    wo = {"editable_paths": ["src/"], "churn_budget": {"max_lines": 50, "max_files": 1}}
+    result = validate_against_work_order(".", wo, changed_files=files, diff_line_count=lines)
+    assert result.churn_over_budget == {}             # within budget (lockfile ignored)
+
+
+# ── broadened executor-report coverage ───────────────────────────────────────
+
+def test_fabrication_detects_camelcase_and_dict_change_shapes():
+    wo = {"editable_paths": ["src/"]}
+    report = {
+        "changedFiles": ["src/real.py"],             # camelCase list
+        "changes": {"src/ghost.py": {"summary": "x"}},  # dict-keyed
+    }
+    result = validate_against_work_order(
+        ".", wo, report=report, changed_files=["src/real.py"],
+    )
+    assert "src/ghost.py" in result.fabricated_claims  # claimed, never changed
+    assert "src/real.py" not in result.fabricated_claims
+
+
+def test_validation_not_run_detects_camelcase_claim():
+    wo = {"editable_paths": ["src/"]}
+    report = {"testsPassed": True}                    # claim, no evidence
+    result = validate_against_work_order(
+        ".", wo, report=report, changed_files=["src/a.py"],
+    )
+    assert "testsPassed" in result.validation_not_run
