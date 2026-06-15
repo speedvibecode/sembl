@@ -85,6 +85,22 @@ class VerifyCommandTests(unittest.TestCase):
         self.assertTrue(payload["reasons"])
         self.assertEqual(json.loads(strict.output)["verdict"], "BLOCK")  # --strict
 
+    def test_auto_discovers_bounds_json_at_repo_root(self):
+        # Zero-arg verify (for hooks/CI): no --wo-file, but bounds.json exists.
+        runner = CliRunner()
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            _init_repo(repo)
+            (repo / "bounds.json").write_text(
+                json.dumps({"editable_paths": ["src/"], "forbidden_areas": []}),
+                encoding="utf-8",
+            )
+            (repo / "src" / "a.py").write_text("FIXED\n", encoding="utf-8")
+            result = runner.invoke(cli.main, ["verify", "--repo", tmp, "--json"])
+        payload = json.loads(result.output)
+        self.assertEqual(payload["verdict"], "PASS")        # in-scope, discovered bounds
+        self.assertIn("src/a.py", payload["in_scope"])
+
     def test_diff_mode_verifies_a_patch_without_worktree(self):
         # CI path: a patch file is scored directly; no working-tree edits needed.
         runner = CliRunner()

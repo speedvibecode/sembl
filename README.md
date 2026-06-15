@@ -139,6 +139,23 @@ Or use the GitHub Action on every pull request (see
     strict: "false"   # advisory by default; true for a hard scope gate
 ```
 
+## Integrations
+
+`verify` auto-discovers a `bounds.json` (then `.sembl/bounds.json`) at the repo
+root, so most integrations run zero-arg. Every one is just a trigger for the same
+command. Full recipes: [`docs/integrations.md`](docs/integrations.md).
+
+- **GitHub Action** — gate every PR (above).
+- **pre-commit** — gate local commits:
+  ```yaml
+  - repo: https://github.com/speedvibecode/sembl
+    rev: v0.1.15
+    hooks: [{ id: sembl-verify }]
+  ```
+- **Agent harnesses** — run verify the moment the agent stops editing. Claude Code
+  (`Stop` hook), Aider (`--test-cmd`), OpenCode (post-edit hook), or any harness
+  that can run a shell command. See [`examples/`](examples/).
+
 ## Install
 
 ```powershell

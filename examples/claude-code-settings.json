@@ -1,0 +1,13 @@
+{
+  "comment": "Drop into .claude/settings.json. Runs sembl verify when Claude Code finishes a turn, so the agent's edits are checked against bounds.json before you act on them. Non-blocking (|| true) — read the verdict; remove || true to hard-fail the hook.",
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "sembl verify --wo-file bounds.json || true" }
+        ]
+      }
+    ]
+  }
+}

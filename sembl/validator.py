@@ -307,8 +307,8 @@ def _git_changed_files(root: Path) -> list:
         if " -> " in path:  # renames: take the new side
             path = path.split(" -> ", 1)[1].strip().strip('"')
         path = _norm(path)
-        # Sembl's own output and graph artifacts are not executor work.
-        if path == ".sembl" or path.startswith((".sembl/", "graphify-out/")):
+        # Sembl's own output, config, and graph artifacts are not executor work.
+        if path in (".sembl", "bounds.json") or path.startswith((".sembl/", "graphify-out/")):
             continue
         if not path:
             continue
@@ -344,7 +344,7 @@ def _git_diff_numstat(root: Path) -> int:
             continue
         added, deleted, path = parts[0], parts[1], parts[2]
         path = _norm(path.strip().strip('"'))
-        if path == ".sembl" or path.startswith((".sembl/", "graphify-out/")):
+        if path in (".sembl", "bounds.json") or path.startswith((".sembl/", "graphify-out/")):
             continue
         if _looks_like_generated(path):
             continue

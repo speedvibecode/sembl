@@ -463,14 +463,13 @@ def verify(repo, wo_id, wo_file, report_file, diff_file, as_json, strict):
     from .validator import validate_against_work_order, load_report, parse_unified_diff
 
     repo_path = Path(repo).resolve()
-    if wo_file:
-        wo_json = Path(wo_file)
-    else:
-        wo_dir = _find_wo_dir(repo_path, wo_id)
-        if not wo_dir or not (wo_dir / "work-order.json").exists():
-            console.print("[red]No Work Order found.[/red] Use --wo-file or run [bold]sembl generate[/bold].")
-            sys.exit(1)
-        wo_json = wo_dir / "work-order.json"
+    wo_json = _resolve_wo_json(repo_path, wo_id, wo_file)
+    if not wo_json or not wo_json.exists():
+        console.print(
+            "[red]No bounds found.[/red] Pass [bold]--wo-file[/bold], add a "
+            "[bold]bounds.json[/bold] at the repo root, or run [bold]sembl generate[/bold]."
+        )
+        sys.exit(1)
 
     work_order = _json.loads(wo_json.read_text(encoding="utf-8", errors="replace"))
     report = None
@@ -828,6 +827,24 @@ def _find_wo_dir(repo_path: Path, wo_id: str | None) -> Path | None:
     # Latest
     dirs = sorted(sembl_dir.iterdir(), key=lambda d: d.stat().st_mtime, reverse=True)
     return dirs[0] if dirs else None
+
+
+def _resolve_wo_json(repo_path: Path, wo_id: str | None, wo_file: str | None) -> Path | None:
+    """Find the bounds/Work-Order JSON to verify against.
+
+    Resolution order, so hooks and CI can run zero-arg when a bounds file is
+    present: explicit --wo-file, then the latest generated Work Order, then a
+    conventional bounds file (`bounds.json`, then `.sembl/bounds.json`).
+    """
+    if wo_file:
+        return Path(wo_file)
+    wo_dir = _find_wo_dir(repo_path, wo_id)
+    if wo_dir and (wo_dir / "work-order.json").exists():
+        return wo_dir / "work-order.json"
+    for cand in (repo_path / "bounds.json", repo_path / ".sembl" / "bounds.json"):
+        if cand.exists():
+            return cand
+    return None
 
 
 def _check_api_key(provider: str, api_key: str | None):

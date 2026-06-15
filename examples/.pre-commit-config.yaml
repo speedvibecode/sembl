@@ -1,0 +1,9 @@
+# Add to your repo's .pre-commit-config.yaml to gate commits with sembl verify.
+# By default verify auto-discovers ./bounds.json (or .sembl/bounds.json); pass
+# --wo-file to point elsewhere, and --strict for a hard scope gate.
+repos:
+  - repo: https://github.com/speedvibecode/sembl
+    rev: v0.1.15
+    hooks:
+      - id: sembl-verify
+        # args: ["--wo-file", "bounds.json", "--strict"]
