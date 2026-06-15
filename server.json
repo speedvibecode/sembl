@@ -1,0 +1,25 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.json",
+  "name": "io.github.speedvibecode/sembl",
+  "description": "A deterministic accountability gate for AI coding agents. verify_change scores a diff against declared bounds (scope, forbidden areas, churn) and report integrity (fabrication, validation evidence) and returns PASS/WARN/BLOCK — no model in the loop. The general case for main-agent-verifies-sub-agent.",
+  "repository": {
+    "url": "https://github.com/speedvibecode/sembl",
+    "source": "github"
+  },
+  "version": "0.1.18",
+  "websiteUrl": "https://sembl.vercel.app",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "sembl",
+      "version": "0.1.18",
+      "runtimeHint": "uvx",
+      "transport": { "type": "stdio" },
+      "packageArguments": [
+        { "type": "named", "name": "--from", "value": "sembl[mcp]" },
+        { "type": "positional", "value": "sembl-mcp" }
+      ]
+    }
+  ]
+}

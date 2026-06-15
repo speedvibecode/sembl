@@ -164,12 +164,18 @@ command. Full recipes: [`docs/integrations.md`](docs/integrations.md).
 - **MCP** — let an agent (or an orchestrator supervising a sub-agent) call the gate
   with no shell: it hands over a diff + what it declared, and gets back the
   PASS/WARN/BLOCK verdict. The general case for *main-agent-verifies-sub-agent*.
-  ```bash
-  pip install "sembl[mcp]"     # then run: sembl-mcp  (stdio)
+  Zero-install — paste into your MCP client (`.mcp.json`, Cursor, Windsurf, …):
+  ```json
+  {
+    "mcpServers": {
+      "sembl": { "command": "uvx", "args": ["--from", "sembl[mcp]", "sembl-mcp"] }
+    }
+  }
   ```
-  Tools: `verify_change`, `bounds_from_spec`, `list_presets`, `doctor`, plus
-  beta `clarify_task` / `generate_work_order` (the full CLI surface). See
-  [`docs/integrations.md`](docs/integrations.md).
+  Or `pip install "sembl[mcp]"` and run `sembl-mcp`. Tools: `verify_change`,
+  `bounds_from_spec`, `list_presets`, `doctor`, plus beta `clarify_task` /
+  `generate_work_order` (the full CLI surface). Example config in
+  [`examples/mcp/`](examples/mcp/); recipes in [`docs/integrations.md`](docs/integrations.md).
 - **Agent Skills** — drop-in skills in [`skills/`](skills/) (copy to
   `.claude/skills/`): `sembl-verify-subagent` (main-agent-verifies-sub-agent),
   `sembl-setup-bounds`, and `sembl-gate-pr`.
