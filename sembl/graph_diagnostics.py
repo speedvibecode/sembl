@@ -12,6 +12,7 @@ detection only. `sembl doctor` renders it; `sembl generate` uses
 
 import os
 import sys
+import time
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -72,6 +73,12 @@ class GraphDiagnostics:
     crg_nodes: int = 0
     crg_stale_env: bool = False
 
+    # Timestamps for staleness guard
+    repo_last_commit_ts: float = 0.0
+    graph_timestamp: float = 0.0
+    graph_age_hours: float = 0.0
+    is_stale: bool = False
+
     checks: list = field(default_factory=list)
 
     @property
@@ -126,13 +133,31 @@ def detect_tool_versions(repo_path: str = ".") -> dict:
     }
 
 
-def detect(repo_path: str) -> GraphDiagnostics:
+def _get_last_commit_ts(root: Path) -> float:
+    """Timestamp of the latest commit in the repo. 0.0 on failure."""
+    try:
+        # Use -c safe.directory to avoid issues in sandbox environments.
+        cmd = ["git", "-c", f"safe.directory={root.as_posix()}", "log", "-1", "--format=%ct"]
+        proc = subprocess.run(
+            cmd, cwd=str(root), capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=10
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            return float(proc.stdout.strip())
+    except Exception:
+        pass
+    return 0.0
+
+
+def detect(repo_path: str, age_threshold_hours: float = 24.0) -> GraphDiagnostics:
     """Inspect the repo and graph subsystem. No LLM calls, no mutations."""
     root = Path(repo_path).resolve()
     d = GraphDiagnostics(repo_path=str(root))
 
     d.repo_valid = root.is_dir()
     d.repo_is_git = (root / ".git").exists()
+    if d.repo_is_git:
+        d.repo_last_commit_ts = _get_last_commit_ts(root)
 
     d.python_version = sys.version.split()[0]
     d.python_executable = sys.executable
@@ -143,12 +168,15 @@ def detect(repo_path: str) -> GraphDiagnostics:
     d.graphify_version = _tool_version(d.graphify_path) if d.graphify_path else ""
     d.crg_version = _tool_version(d.crg_path) if d.crg_path else ""
 
+    timestamps = []
+
     # Graphify graph artifact: graphify-out/graph.json (or $GRAPHIFY_OUT).
     out_dir = Path(os.environ.get("GRAPHIFY_OUT") or (root / "graphify-out"))
     d.graphify_out_dir = str(out_dir)
     graph_json = out_dir / "graph.json"
     if graph_json.is_file() and graph_json.stat().st_size > 2:
         d.graphify_graph = "present"
+        timestamps.append(graph_json.stat().st_mtime)
 
     # code-review-graph database: <data-dir>/graph.db
     data_dir = _crg_data_dir(root)
@@ -159,6 +187,16 @@ def detect(repo_path: str) -> GraphDiagnostics:
         if db.is_file() and db.stat().st_size > 0:
             d.crg_nodes = _crg_node_count(root)
             d.crg_status = "present" if d.crg_nodes > 0 else "empty"
+            timestamps.append(db.stat().st_mtime)
+
+    if timestamps:
+        d.graph_timestamp = min(timestamps)
+        d.graph_age_hours = (time.time() - d.graph_timestamp) / 3600
+        # Stale if too old OR older than the last commit.
+        if d.graph_age_hours > age_threshold_hours:
+            d.is_stale = True
+        if d.repo_last_commit_ts > 0 and d.graph_timestamp < d.repo_last_commit_ts:
+            d.is_stale = True
 
     # Stale env: CRG_DATA_DIR points at a different repo than this one.
     env_dir = os.environ.get("CRG_DATA_DIR")
@@ -253,6 +291,16 @@ def _build_checks(d: GraphDiagnostics, root: Path) -> list:
                             "repo-specific folder instead.",
                             f"Set SEMBL_CRG_DATA_DIR={d.crg_data_dir} to be explicit."))
 
+    # Graph age / staleness
+    if d.graph_available and d.graph_timestamp > 0:
+        age_str = f"{d.graph_age_hours:.1f}h"
+        status = "warn" if d.is_stale else "ok"
+        detail = f"Graph age: {age_str}"
+        if d.repo_last_commit_ts > 0 and d.graph_timestamp < d.repo_last_commit_ts:
+            detail += " (older than last commit)"
+        fix = "Run with --refresh-graph to rebuild." if d.is_stale else ""
+        checks.append(Check("Graph age", status, detail, fix))
+
     return checks
 
 
@@ -310,7 +358,11 @@ def resolve_graph_plan(mode: str, d: GraphDiagnostics) -> tuple:
             srcs.append("Graphify")
         if d.crg_installed and d.crg_status == "present":
             srcs.append(f"code-review-graph ({d.crg_nodes} nodes)")
-        return ("use", "Graph context available: " + ", ".join(srcs) + ".")
+        
+        msg = "Graph context available: " + ", ".join(srcs) + "."
+        if d.is_stale:
+            msg += f" [yellow]WARN: Graph is stale ({d.graph_age_hours:.1f}h old).[/yellow]"
+        return ("use", msg)
 
     reason = _unavailable_reason(d)
     if mode == "required":

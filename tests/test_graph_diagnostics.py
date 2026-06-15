@@ -1,5 +1,6 @@
 import os
 import unittest
+import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -114,6 +115,26 @@ class DetectTests(unittest.TestCase):
             self.assertEqual(d.crg_status, "missing")
             self.assertFalse(d.graph_available)
             self.assertTrue(any(c.status == "missing" for c in d.checks))
+
+    def test_stale_graph_is_detected(self):
+        with TemporaryDirectory() as tmp, patch.dict(os.environ, {}, clear=True):
+            root = Path(tmp)
+            (root / "graphify-out").mkdir()
+            graph_json = root / "graphify-out" / "graph.json"
+            graph_json.write_text('{"nodes":[]}', encoding="utf-8")
+
+            # Set graph artifact mtime to 48 hours ago
+            stale_time = time.time() - (48 * 3600)
+            os.utime(str(graph_json), (stale_time, stale_time))
+
+            with patch("sembl.graph_diagnostics._resolve_cli", return_value="/x/graphify"):
+                d = detect(str(root), age_threshold_hours=24)
+
+            self.assertTrue(d.is_stale)
+            self.assertEqual(d.graphify_graph, "present")
+            age_check = next(c for c in d.checks if c.name == "Graph age")
+            self.assertEqual(age_check.status, "warn")
+            self.assertIn("48.0h", age_check.detail)
 
 
 class GenerateRequiredModeTests(unittest.TestCase):

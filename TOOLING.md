@@ -28,23 +28,22 @@ snapshotted.
 
 **4. Benchmark-gated adoption — the decision function.** When a tool ships something
 major, do NOT "upgrade and hope." Wire it behind a flag, add a tool-version axis to the
-benchmark matrix (sembl-bench `run_matrix.py`), run it on Loc-Bench, and read the
-recall@k delta. Adopt only if it measurably helps. A tool update is a hypothesis tested
-on the bench.
+benchmark matrix (a `run_matrix.py` script — not yet built; the demo-tasks A/B evidence
+is the current proxy), and read the recall@k delta. Adopt only if it measurably helps.
+A tool update is a hypothesis tested on the bench.
 
 **5. The intake loop.** watch (their releases/changelog) → triage (breaking /
 new-capability / noise) → evaluate the major ones via the matrix → pin-the-win (or stay
-put). Early: a manual changelog skim. Later: a scheduled check. Eventually: part of the
-self-improving factory (Sembl reading a tool's changelog and proposing the adapter
-update).
+put). Currently: a manual changelog skim. Later: a scheduled check.
 
 ## When a tool update lands — checklist
 
 1. Does `sembl doctor` still pass and does generation still work? (adapter intact)
 2. Read the changelog: breaking, new-capability, or noise?
 3. Breaking → fix the adapter; add a regression note.
-4. New-capability → wire behind a flag, matrix-eval on Loc-Bench, adopt iff recall@k
-   improves; bump the pinned/snapshotted version and note it.
+4. New-capability → wire behind a flag, matrix-eval on the demo-tasks benchmark (Loc-Bench
+   scope when that infra is built), adopt iff recall@k improves; bump the pinned/snapshotted
+   version and note it.
 5. Always: the recorded tool versions in run provenance make "did the tool change the
    result, or did Sembl?" answerable.
 
