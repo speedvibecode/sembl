@@ -46,7 +46,7 @@ console = Console()
 @click.group()
 @click.version_option(__version__, prog_name="sembl")
 def main():
-    """Sembl — turn messy repo intent into scoped AI Work Orders."""
+    """Sembl — a deterministic accountability gate for AI coding agents."""
     pass
 
 
@@ -533,6 +533,65 @@ def _verify_exit_code(verdict: str, strict: bool) -> int:
     if verdict == "WARN":
         return 1 if strict else 0
     return 0
+
+
+# ── sembl bounds ──────────────────────────────────────────────────────────────
+
+@main.command()
+@click.option("--spec-kit", "spec_kit", required=True,
+              type=click.Path(exists=True),
+              help="Path to a GitHub Spec Kit tasks.md, or a feature/specs directory containing one.")
+@click.option("--out", "out_file", default=None,
+              type=click.Path(),
+              help="Write the bounds JSON here. Defaults to stdout.")
+def bounds(spec_kit, out_file):
+    """Build a Sembl bounds contract from a GitHub Spec Kit feature.
+
+    Reads a Spec Kit tasks.md (which already names the exact file paths per task)
+    and emits the four-field bounds JSON that `sembl verify --wo-file` consumes:
+    editable_paths (the task file paths), an empty forbidden_areas for you to
+    fill, and a grounded churn_budget. Use Spec Kit (or Tessl / Kiro) to plan the
+    change; use Sembl to verify the agent stayed in those lines.
+    """
+    from .speckit import bounds_from_spec_kit
+
+    try:
+        bounds_dict, source = bounds_from_spec_kit(spec_kit)
+    except Exception as error:
+        console.print(f"[red]Could not build bounds:[/red] {error}")
+        sys.exit(1)
+
+    payload = json.dumps(bounds_dict, indent=2)
+    if out_file:
+        Path(out_file).write_text(payload + "\n", encoding="utf-8")
+
+    editable = bounds_dict["editable_paths"]
+    if not editable:
+        console.print(
+            f"[yellow]No file paths found in {source}.[/yellow] "
+            "Spec Kit tasks usually name exact paths — check the file, or write the bounds by hand."
+        )
+    lines = [
+        f"[dim]Source:[/dim] {source}",
+        f"[bold]Editable paths:[/bold] {len(editable)}",
+    ]
+    lines += [f"  [green]{escape(p)}[/green]" for p in editable[:20]]
+    if len(editable) > 20:
+        lines.append(f"  [dim]… and {len(editable) - 20} more[/dim]")
+    lines += [
+        "",
+        "[bold]forbidden_areas[/bold] is empty — add paths the change must not touch "
+        "(migrations, infra, generated code).",
+    ]
+    if out_file:
+        lines.append("")
+        lines.append(f"[dim]Wrote:[/dim] {out_file}  →  [bold]sembl verify --wo-file {out_file}[/bold]")
+    console.print()
+    console.print(Panel("\n".join(lines), title="[bold blue]sembl bounds — from Spec Kit[/bold blue]", border_style="blue"))
+    console.print()
+
+    if not out_file:
+        click.echo(payload)
 
 
 # ── sembl list ────────────────────────────────────────────────────────────────

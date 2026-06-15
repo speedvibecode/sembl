@@ -1,6 +1,6 @@
 """
-Sembl â€” Work Order generator for AI software development.
-Turn messy repo intent into scoped execution contracts.
+Sembl — a deterministic accountability gate for AI coding agents.
+Verify an agent's diff stayed in declared bounds and didn't fake its results.
 """
 
-__version__ = "0.1.11"  # x-release-please-version
+__version__ = "0.1.12"  # x-release-please-version

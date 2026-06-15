@@ -1,0 +1,5 @@
+{
+  "editable_paths": ["src/auth/", "src/api/routes/login.ts"],
+  "forbidden_areas": ["migrations/", "infra/", ".github/"],
+  "churn_budget": { "max_files": 6, "max_lines": 200 }
+}

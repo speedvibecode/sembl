@@ -50,17 +50,27 @@ class ScopeReport:
     validation_not_run: list = field(default_factory=list)
 
     # Hard contract breaches → BLOCK.
-    def _blocking(self) -> bool:
-        return bool(self.forbidden_hits or self.out_of_scope or self.fabricated_claims)
+    def _blocking(self, policy: str = "strict") -> bool:
+        # "strict" (default): any out-of-scope edit BLOCKs.
+        # "advisory_scope": out-of-scope edits demote to WARN; only forbidden hits
+        #   and fabricated claims BLOCK. (Candidate fix — scope becomes advisory
+        #   because auto-generated editable_paths aren't precise enough to gate on.)
+        hard = bool(self.forbidden_hits or self.fabricated_claims)
+        if policy == "advisory_scope":
+            return hard
+        return hard or bool(self.out_of_scope)
 
     # Soft signals → WARN.
-    def _warning(self) -> bool:
-        return bool(self.churn_over_budget or self.validation_not_run or self.unreported_changes)
+    def _warning(self, policy: str = "strict") -> bool:
+        soft = bool(self.churn_over_budget or self.validation_not_run or self.unreported_changes)
+        if policy == "advisory_scope":
+            soft = soft or bool(self.out_of_scope)
+        return soft
 
-    def verdict(self) -> str:
-        if self._blocking():
+    def verdict(self, policy: str = "strict") -> str:
+        if self._blocking(policy):
             return "BLOCK"
-        if self._warning():
+        if self._warning(policy):
             return "WARN"
         return "PASS"
 

@@ -245,6 +245,31 @@ def test_no_validation_claim_means_no_finding(git_repo):
     assert result.verdict() == "PASS"
 
 
+# ── verdict policy: advisory_scope (C2 candidate fix) ─────────────────────────
+
+
+def test_advisory_scope_demotes_out_of_scope_to_warn(tmp_path):
+    wo = {"editable_paths": ["src/a.py"], "forbidden_areas": ["docs/"]}
+    r = validate_against_work_order(str(tmp_path), wo, changed_files=["src/b.py"])
+    assert r.verdict() == "BLOCK"                      # strict
+    assert r.verdict("advisory_scope") == "WARN"       # scope is advisory
+
+
+def test_advisory_scope_still_blocks_forbidden(tmp_path):
+    wo = {"editable_paths": ["src/a.py"], "forbidden_areas": ["docs/"]}
+    r = validate_against_work_order(str(tmp_path), wo, changed_files=["docs/x.md"])
+    assert r.verdict("advisory_scope") == "BLOCK"
+
+
+def test_advisory_scope_still_blocks_fabrication(tmp_path):
+    wo = {"editable_paths": ["src/a.py"]}
+    r = validate_against_work_order(
+        str(tmp_path), wo, report={"files_modified": ["src/a.py"]}, changed_files=[],
+    )
+    assert r.fabricated_claims == ["src/a.py"]
+    assert r.verdict("advisory_scope") == "BLOCK"
+
+
 # ── diff mode (no git tree) ───────────────────────────────────────────────────
 
 

@@ -1,0 +1,93 @@
+"""
+sembl.speckit — turn a GitHub Spec Kit feature into a Sembl bounds contract.
+
+Spec Kit (https://github.com/github/spec-kit) lives upstream of the agent: it
+plans *what* to build and writes `specs/<feature>/tasks.md`, where each task
+already names the exact file paths it will touch. Sembl lives downstream: it
+verifies the agent *stayed in those lines*. This adapter is the bridge — it
+reads a `tasks.md` and emits the four-field bounds contract `sembl verify` reads
+(see docs/bounds.md).
+
+It is deliberately conservative: it only extracts concrete file paths (a path
+segment plus a file extension), so `src/models/user.py` becomes an editable path
+but prose like "the auth module" does not. `forbidden_areas` cannot be inferred
+from a task list and is left empty for the human to fill — verify treats scope
+as advisory and reserves BLOCK for forbidden hits and fabrication, so an empty
+forbidden list is safe, not silently permissive.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+# A concrete file path: one or more "segment/" parts followed by "name.ext".
+# Matched inside backticks or bare prose. Conservative on purpose — we want
+# real paths, not every slash-containing token.
+_PATH_RE = re.compile(r"(?<![\w./-])((?:[\w.-]+/)+[\w.-]+\.[A-Za-z0-9]+)")
+
+
+def extract_paths(text: str) -> list[str]:
+    """Extract unique, order-preserved file paths from Spec Kit task text."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for match in _PATH_RE.finditer(text):
+        path = _norm(match.group(1))
+        if not path or path in seen:
+            continue
+        # Drop obvious non-source noise (URLs already excluded by the lack of a
+        # scheme in the regex; skip markdown image/link artifacts just in case).
+        if path.startswith(("http:", "https:")):
+            continue
+        seen.add(path)
+        out.append(path)
+    return out
+
+
+def bounds_from_tasks_text(text: str) -> dict:
+    """Build a bounds contract dict from the contents of a Spec Kit tasks.md."""
+    editable = extract_paths(text)
+    bounds = {
+        "editable_paths": editable,
+        "forbidden_areas": [],
+        # tasks.md enumerates the files, so a file-count budget is grounded;
+        # line count can't be inferred and is left out (verify skips it).
+        "churn_budget": {"max_files": max(3, len(editable) + 2)},
+    }
+    return bounds
+
+
+def find_tasks_file(target: Path) -> Path:
+    """Resolve a tasks.md from a file or a Spec Kit directory.
+
+    If `target` is a file, it is used directly. If it's a directory, all
+    `tasks.md` under it are collected: exactly one → use it; several → raise with
+    the list so the caller can point at a specific file.
+    """
+    if target.is_file():
+        return target
+    if not target.exists():
+        raise FileNotFoundError(f"path does not exist: {target}")
+    candidates = sorted(target.rglob("tasks.md"))
+    if not candidates:
+        raise FileNotFoundError(f"no tasks.md found under {target}")
+    if len(candidates) > 1:
+        listing = "\n".join(f"  - {c}" for c in candidates)
+        raise ValueError(
+            f"multiple tasks.md found under {target}; point --spec-kit at one:\n{listing}"
+        )
+    return candidates[0]
+
+
+def bounds_from_spec_kit(target: str | Path) -> tuple[dict, Path]:
+    """Read a Spec Kit tasks.md (or feature dir) and return (bounds, source_file)."""
+    tasks_file = find_tasks_file(Path(target))
+    text = tasks_file.read_text(encoding="utf-8", errors="replace")
+    return bounds_from_tasks_text(text), tasks_file
+
+
+def _norm(path: str) -> str:
+    path = str(path).strip().strip("`").replace("\\", "/")
+    while path.startswith("./"):
+        path = path[2:]
+    return path.rstrip("/")
