@@ -86,12 +86,18 @@ that can emit them can drive the gate:
 
 Produce it however you like:
 
-- **GitHub Spec Kit (recommended).** If you plan changes with
-  [Spec Kit](https://github.com/github/spec-kit), its `tasks.md` already lists the
-  **exact file paths** for each task — those map straight onto `editable_paths`.
-  Use Spec Kit (or Tessl, or Kiro) to decide *what* to build; use Sembl to verify
-  the agent *stayed in those lines*. They are complementary: spec tools live
-  upstream of the agent, Sembl lives downstream of it.
+- **From a planning tool (recommended).** `sembl bounds` turns what an upstream
+  tool already wrote into a bounds file:
+  ```bash
+  sembl bounds --spec-kit specs/001-feature --out bounds.json   # GitHub Spec Kit
+  sembl bounds --from kiro|tessl|agents-md|cursor-rules          # other presets
+  sembl bounds --config adapter.json                            # custom (declarative)
+  ```
+  Spec Kit's `tasks.md` (and the other tools' artifacts) already name the **exact
+  file paths** for each task — those map straight onto `editable_paths`. Use the
+  planner to decide *what* to build; use Sembl to verify the agent *stayed in
+  those lines*. Adding a new tool is a config entry, not code — see
+  [`docs/integrations.md`](docs/integrations.md).
 - **By hand.** Write the four fields yourself. It's a normal JSON file.
 - **`sembl generate` (beta, optional).** Sembl can also produce a fuller Work
   Order JSON that `verify` reads directly — see

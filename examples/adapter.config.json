@@ -1,0 +1,6 @@
+{
+  "source": ["docs/plan/**/*.md", "AGENTS.md"],
+  "editable": { "strategy": "path-tokens", "literal": ["src/core/"] },
+  "forbidden": { "literal": ["migrations/", "infra/", ".github/"] },
+  "churn": { "max_files": "auto", "max_lines": 400 }
+}

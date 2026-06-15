@@ -558,25 +558,56 @@ def _verify_exit_code(verdict: str, strict: bool) -> int:
 # ── sembl bounds ──────────────────────────────────────────────────────────────
 
 @main.command()
-@click.option("--spec-kit", "spec_kit", required=True,
+@click.option("--from", "preset", default=None,
+              help="Adapter preset: spec-kit, kiro, tessl, agents-md, cursor-rules. "
+                   "Turns that tool's planning artifacts into a bounds file.")
+@click.option("--source", default=None,
+              help="Override the preset's source file/glob (repo-relative).")
+@click.option("--config", "config_file", default=None,
               type=click.Path(exists=True),
-              help="Path to a GitHub Spec Kit tasks.md, or a feature/specs directory containing one.")
+              help="A custom declarative adapter config (JSON, or YAML if PyYAML installed).")
+@click.option("--spec-kit", "spec_kit", default=None,
+              type=click.Path(exists=True),
+              help="Shortcut for --from spec-kit --source <path> (a tasks.md or specs dir).")
+@click.option("--repo", "-r", default=".", show_default=True,
+              help="Repository root that source globs are resolved against.")
 @click.option("--out", "out_file", default=None,
               type=click.Path(),
               help="Write the bounds JSON here. Defaults to stdout.")
-def bounds(spec_kit, out_file):
-    """Build a Sembl bounds contract from a GitHub Spec Kit feature.
+def bounds(preset, source, config_file, spec_kit, repo, out_file):
+    """Build a Sembl bounds contract from a planning tool's artifacts.
 
-    Reads a Spec Kit tasks.md (which already names the exact file paths per task)
-    and emits the four-field bounds JSON that `sembl verify --wo-file` consumes:
-    editable_paths (the task file paths), an empty forbidden_areas for you to
-    fill, and a grounded churn_budget. Use Spec Kit (or Tessl / Kiro) to plan the
-    change; use Sembl to verify the agent stayed in those lines.
+    Declarative adapters turn what an upstream tool already wrote (GitHub Spec
+    Kit, Kiro, Tessl, AGENTS.md, Cursor rules — or a custom --config) into the
+    four-field bounds JSON that `sembl verify --wo-file` consumes: editable_paths
+    pulled from the source, a forbidden_areas list for you to fill, and a grounded
+    churn budget. Use the planner to decide what to build; use Sembl to verify the
+    agent stayed in those lines.
     """
-    from .speckit import bounds_from_spec_kit
+    from .adapters import bounds_from_preset, build_bounds_from_config, load_config, preset_names
 
+    repo_path = str(Path(repo).resolve())
+    title = "sembl bounds"
     try:
-        bounds_dict, source = bounds_from_spec_kit(spec_kit)
+        if config_file:
+            bounds_dict, used = build_bounds_from_config(load_config(config_file), repo_path)
+            title = f"sembl bounds — {Path(config_file).name}"
+        elif spec_kit:
+            # Use the dedicated resolver: handles a tasks.md file OR a specs dir,
+            # relative or absolute, robustly.
+            from .speckit import bounds_from_spec_kit
+            bounds_dict, source = bounds_from_spec_kit(spec_kit)
+            used = [source]
+            title = "sembl bounds — spec-kit"
+        elif preset:
+            bounds_dict, used = bounds_from_preset(preset, repo_path, source=source)
+            title = f"sembl bounds — {preset}"
+        else:
+            console.print(
+                "[red]Nothing to build from.[/red] Pass [bold]--from[/bold] "
+                f"({', '.join(preset_names())}), [bold]--spec-kit[/bold], or [bold]--config[/bold]."
+            )
+            sys.exit(1)
     except Exception as error:
         console.print(f"[red]Could not build bounds:[/red] {error}")
         sys.exit(1)
@@ -586,18 +617,17 @@ def bounds(spec_kit, out_file):
         Path(out_file).write_text(payload + "\n", encoding="utf-8")
 
     editable = bounds_dict["editable_paths"]
-    if not editable:
-        console.print(
-            f"[yellow]No file paths found in {source}.[/yellow] "
-            "Spec Kit tasks usually name exact paths — check the file, or write the bounds by hand."
-        )
-    lines = [
-        f"[dim]Source:[/dim] {source}",
-        f"[bold]Editable paths:[/bold] {len(editable)}",
-    ]
+    lines = [f"[dim]Sources read:[/dim] {len(used)}"]
+    lines += [f"  [dim]{escape(str(u))}[/dim]" for u in used[:8]]
+    if len(used) > 8:
+        lines.append(f"  [dim]… and {len(used) - 8} more[/dim]")
+    lines.append(f"[bold]Editable paths:[/bold] {len(editable)}")
     lines += [f"  [green]{escape(p)}[/green]" for p in editable[:20]]
     if len(editable) > 20:
         lines.append(f"  [dim]… and {len(editable) - 20} more[/dim]")
+    if not editable:
+        lines.append("  [yellow]none found — check the source artifacts name file paths, "
+                     "or write the bounds by hand[/yellow]")
     lines += [
         "",
         "[bold]forbidden_areas[/bold] is empty — add paths the change must not touch "
@@ -607,7 +637,7 @@ def bounds(spec_kit, out_file):
         lines.append("")
         lines.append(f"[dim]Wrote:[/dim] {out_file}  →  [bold]sembl verify --wo-file {out_file}[/bold]")
     console.print()
-    console.print(Panel("\n".join(lines), title="[bold blue]sembl bounds — from Spec Kit[/bold blue]", border_style="blue"))
+    console.print(Panel("\n".join(lines), title=f"[bold blue]{title}[/bold blue]", border_style="blue"))
     console.print()
 
     if not out_file:

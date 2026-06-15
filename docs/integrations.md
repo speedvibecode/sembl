@@ -14,10 +14,38 @@ root, so most of these run zero-arg. Produce that bounds file by hand, with
 
 | Tool | How | Status |
 |------|-----|--------|
-| GitHub Spec Kit | `sembl bounds --spec-kit specs/<feature>` → `bounds.json` | shipped |
+| GitHub Spec Kit | `sembl bounds --spec-kit specs/<feature>` (or `--from spec-kit`) | shipped |
+| Kiro / Tessl / AGENTS.md / Cursor rules | `sembl bounds --from kiro\|tessl\|agents-md\|cursor-rules` | shipped |
+| Any other tool | `sembl bounds --config adapter.json` (declarative — see below) | shipped |
 | Hand-written | author the four fields directly | shipped |
 | `sembl generate` (beta) | LLM drafts a `work-order.json` verify reads | shipped |
-| Tessl / Kiro / AGENTS.md | declarative adapter (planned) | roadmap |
+
+### Declarative adapters (the long tail)
+
+New planning tools don't need new code — they need a config. A built-in **preset**
+is just a config dict naming which files to read and how to pull paths out of them:
+
+```bash
+sembl bounds --from agents-md --out bounds.json     # reads AGENTS.md / CLAUDE.md
+sembl bounds --from kiro --out bounds.json           # reads .kiro/specs/**/tasks.md
+sembl bounds --from spec-kit --source specs/001/tasks.md
+```
+
+For anything not covered, point `--config` at your own adapter (JSON, or YAML if
+PyYAML is installed):
+
+```json
+{
+  "source": ["docs/plan/**/*.md"],
+  "editable": { "strategy": "path-tokens", "literal": ["src/core/"] },
+  "forbidden": { "literal": ["migrations/", "infra/"] },
+  "churn": { "max_files": "auto", "max_lines": 400 }
+}
+```
+
+`source` is a list of repo-relative files/globs; `path-tokens` extracts concrete
+file paths from their text; `literal` lists are added verbatim. That's the whole
+mechanism — the contract verify reads never changes, so the tail stays free.
 
 ## Downstream — where the verdict is consumed
 
