@@ -121,15 +121,18 @@ def bounds_from_spec(
     tasks_text: str | None = None,
     tasks_path: str | None = None,
     preset: str | None = None,
+    config_file: str | None = None,
     repo_path: str = ".",
     source: str | None = None,
 ) -> dict:
     """Derive a bounds contract from a spec/plan, so scope has precise inputs.
 
     One of: `tasks_text` (raw Spec Kit tasks.md content), `tasks_path` (a tasks.md or
-    Spec Kit feature dir), or `preset` (spec-kit / kiro / tessl / agents-md /
-    cursor-rules, resolved under `repo_path`). Returns {"bounds": {...},
-    "sources": [...]}. Prose is a poor bounds source — prefer a real tasks.md."""
+    Spec Kit feature dir), `preset` (spec-kit / kiro / tessl / agents-md /
+    cursor-rules, resolved under `repo_path`), or `config_file` (a custom declarative
+    adapter config — which files to read, how to pull paths, what's forbidden).
+    Returns {"bounds": {...}, "sources": [...]}. Prose is a poor bounds source —
+    prefer a real tasks.md."""
     from . import speckit
     from . import adapters
 
@@ -138,16 +141,74 @@ def bounds_from_spec(
     if tasks_path is not None:
         bounds, src = speckit.bounds_from_spec_kit(tasks_path)
         return {"bounds": bounds, "sources": [str(src)]}
+    if config_file is not None:
+        config = adapters.load_config(config_file)
+        bounds, sources = adapters.build_bounds_from_config(config, repo_path)
+        return {"bounds": bounds, "sources": sources}
     if preset is not None:
         bounds, sources = adapters.bounds_from_preset(preset, repo_path, source)
         return {"bounds": bounds, "sources": sources}
-    raise ValueError("provide one of: tasks_text, tasks_path, or preset")
+    raise ValueError("provide one of: tasks_text, tasks_path, preset, or config_file")
 
 
 def list_presets() -> dict:
     """List the available declarative bounds presets (Tier-2 adapters)."""
     from . import adapters
     return {"presets": adapters.preset_names()}
+
+
+def doctor(repo_path: str = ".", graph_age_threshold: float = 24.0) -> dict:
+    """Repo-readiness diagnostics (deterministic, no API key, no model).
+
+    Reports project type, detected rules/commands, and — if the graph extra is
+    installed — graph substrate freshness. Useful before generating bounds or
+    handing a repo to an agent."""
+    from .graph_diagnostics import detect
+    return detect(repo_path, age_threshold_hours=graph_age_threshold).to_dict()
+
+
+# --- Beta: generation half (frozen — exposed for surface completeness, not a
+# --- recommended path). Needs an LLM provider + key; verify/bounds do not. Prefer
+# --- a real spec tool (Spec Kit) upstream; see docs.
+def clarify_task(
+    task: str,
+    repo_path: str = ".",
+    provider: str = "openai",
+    model: str | None = None,
+    api_key: str | None = None,
+) -> dict:
+    """[beta] Read a task's intent and surface ambiguities before execution.
+
+    Decoupled from execution; needs a provider API key. The deterministic gate
+    (verify) is the supported product — this is optional and unmaintained."""
+    from .repo_probe import probe_repo
+    from .clarify import analyze_clarity
+    probe = probe_repo(repo_path, task, use_graphify=False, use_crg=False)
+    return analyze_clarity(task, probe, provider, model, api_key).to_dict()
+
+
+def generate_work_order(
+    task: str,
+    repo_path: str = ".",
+    provider: str = "openai",
+    model: str | None = None,
+    api_key: str | None = None,
+    write: bool = False,
+) -> dict:
+    """[beta] Generate a Work Order (a superset of the bounds contract) from a task.
+
+    Frozen generation half — our own evidence falsified "rich contract → better
+    outcomes" (see project notes). Exposed for completeness; for real use, prefer a
+    spec tool upstream and let `verify` gate the result. Needs a provider API key.
+    Graph enrichment is off here for a light, dependency-free path."""
+    import dataclasses
+    from .repo_probe import probe_repo
+    from .generator import generate_work_order as _gen
+    from .output import write_work_order
+    probe = probe_repo(repo_path, task, use_graphify=False, use_crg=False)
+    wo = _gen(task, probe, provider, model, api_key, enrich_graph=False)
+    out_dir = str(write_work_order(wo, repo_path)) if write else None
+    return {"work_order": dataclasses.asdict(wo), "written_to": out_dir}
 
 
 # --------------------------------------------------------------------------- #
@@ -164,18 +225,15 @@ def build_server() -> Any:
         ) from exc
 
     server = FastMCP("sembl")
-    server.tool(
-        name="verify_change",
-        description=verify_change.__doc__,
-    )(verify_change)
-    server.tool(
-        name="bounds_from_spec",
-        description=bounds_from_spec.__doc__,
-    )(bounds_from_spec)
-    server.tool(
-        name="list_presets",
-        description=list_presets.__doc__,
-    )(list_presets)
+    for fn in (
+        verify_change,        # the gate (headline)
+        bounds_from_spec,     # bounds from spec / preset / config
+        list_presets,
+        doctor,               # deterministic repo diagnostics
+        clarify_task,         # [beta]
+        generate_work_order,  # [beta]
+    ):
+        server.tool(name=fn.__name__, description=fn.__doc__)(fn)
     return server
 
 

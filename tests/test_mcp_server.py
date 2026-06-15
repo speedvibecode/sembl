@@ -6,7 +6,15 @@ from sembl.mcp_server import (
     verify_change,
     bounds_from_spec,
     list_presets,
+    doctor,
+    build_server,
 )
+
+try:
+    import mcp as _mcp  # noqa: F401
+    HAS_MCP = True
+except ImportError:
+    HAS_MCP = False
 
 DIFF = """\
 diff --git a/src/app.py b/src/app.py
@@ -77,3 +85,34 @@ def test_bounds_from_spec_requires_a_source():
 
 def test_list_presets_includes_spec_kit():
     assert "spec-kit" in list_presets()["presets"]
+
+
+def test_bounds_from_spec_config_file(tmp_path):
+    import json
+    (tmp_path / "specs").mkdir()
+    (tmp_path / "specs" / "plan.md").write_text(
+        "implement in `src/core/engine.py` and src/core/util.py", encoding="utf-8")
+    cfg = tmp_path / "adapter.json"
+    cfg.write_text(json.dumps({
+        "source": ["specs/*.md"],
+        "editable": {"strategy": "path-tokens"},
+        "forbidden": {"literal": []},
+    }), encoding="utf-8")
+    out = bounds_from_spec(config_file=str(cfg), repo_path=str(tmp_path))
+    assert "src/core/engine.py" in out["bounds"]["editable_paths"]
+
+
+def test_doctor_runs_without_keys():
+    out = doctor(repo_path=".")
+    assert isinstance(out, dict)
+    assert "checks" in out or "project_type" in out or out  # shape-tolerant smoke
+
+
+@pytest.mark.skipif(not HAS_MCP, reason="requires the 'mcp' extra")
+def test_all_fronts_registered():
+    # The MCP surface mirrors the CLI: gate + bounds + diagnostics + beta generation.
+    import asyncio
+    s = build_server()
+    names = {t.name for t in asyncio.new_event_loop().run_until_complete(s.list_tools())}
+    assert {"verify_change", "bounds_from_spec", "list_presets",
+            "doctor", "clarify_task", "generate_work_order"} <= names

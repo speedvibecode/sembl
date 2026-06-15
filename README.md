@@ -155,7 +155,7 @@ command. Full recipes: [`docs/integrations.md`](docs/integrations.md).
 - **pre-commit** — gate local commits:
   ```yaml
   - repo: https://github.com/speedvibecode/sembl
-    rev: v0.1.17
+    rev: v0.1.18
     hooks: [{ id: sembl-verify }]
   ```
 - **Agent harnesses** — run verify the moment the agent stops editing. Claude Code
@@ -167,8 +167,12 @@ command. Full recipes: [`docs/integrations.md`](docs/integrations.md).
   ```bash
   pip install "sembl[mcp]"     # then run: sembl-mcp  (stdio)
   ```
-  Tools: `verify_change`, `bounds_from_spec`, `list_presets`. See
+  Tools: `verify_change`, `bounds_from_spec`, `list_presets`, `doctor`, plus
+  beta `clarify_task` / `generate_work_order` (the full CLI surface). See
   [`docs/integrations.md`](docs/integrations.md).
+- **Agent Skills** — drop-in skills in [`skills/`](skills/) (copy to
+  `.claude/skills/`): `sembl-verify-subagent` (main-agent-verifies-sub-agent),
+  `sembl-setup-bounds`, and `sembl-gate-pr`.
 
 ## Install
 
