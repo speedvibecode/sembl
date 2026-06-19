@@ -33,6 +33,13 @@ from pathlib import Path
 # extension happily matched as if they were files.
 _PATH_RE = re.compile(r"(?<![\w./-])((?:[\w.-]+/)*[\w.-]+\.[A-Za-z][A-Za-z0-9]{0,9})")
 
+_ROOT_FILE_EXTENSIONS = {
+    "c", "cc", "cpp", "cs", "css", "go", "h", "hpp", "html", "java", "js",
+    "json", "jsx", "kt", "kts", "lock", "lua", "mjs", "md", "php", "py",
+    "rb", "rs", "scss", "sh", "sql", "swift", "toml", "ts", "tsx", "txt",
+    "xml", "yaml", "yml",
+}
+
 
 def extract_paths(text: str, root: "Path | str | None" = None) -> list[str]:
     """Extract unique, order-preserved file paths from spec / task text.
@@ -55,10 +62,13 @@ def extract_paths(text: str, root: "Path | str | None" = None) -> list[str]:
             continue
         if "/" not in path:
             # A bare, root-level filename. Allowed (greenfield/root-file specs need
-            # them), but prose abbreviations that look like name.ext — "e.g.", "i.e.",
-            # "U.S." — must not be mistaken for files. Real source/config files carry a
-            # 2+ char, letter-led extension; those abbreviations don't, so require it.
-            if len(path.rsplit(".", 1)[-1]) < 2:
+            # them), but prose often contains domain names (`example.com`), dotted config
+            # keys (`app.mode`), package names (`left.pad`), and abbreviations (`e.g.`).
+            # For bare root files, keep a conservative source/config extension allow-list;
+            # slash-qualified paths still use the broader regex because the directory
+            # prefix is already a strong signal.
+            ext = path.rsplit(".", 1)[-1].lower()
+            if ext not in _ROOT_FILE_EXTENSIONS:
                 continue
         if base is not None and not (base / path).is_file():
             continue

@@ -67,9 +67,17 @@ def test_extract_paths_finds_root_level_files():
 
 def test_extract_paths_rejects_prose_abbreviations():
     # Bare-filename matching must not mistake prose abbreviations that look like
-    # name.ext for files — they have a 1-char extension; real files have 2+.
+    # name.ext for files.
     text = "e.g. do this, i.e. that, common in the U.S. — then edit app.py"
     assert extract_paths(text) == ["app.py"]
+
+
+def test_extract_paths_rejects_bare_domain_config_and_package_dots():
+    text = (
+        "Create index.html for example.com. Use app.mode and cache.store, "
+        "keep the npm package left.pad, and edit src/app.py."
+    )
+    assert extract_paths(text) == ["index.html", "src/app.py"]
 
 
 def test_extract_paths_root_validation_filters_nonexistent(tmp_path):
