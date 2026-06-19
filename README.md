@@ -155,7 +155,7 @@ command. Full recipes: [`docs/integrations.md`](docs/integrations.md).
 - **pre-commit** — gate local commits:
   ```yaml
   - repo: https://github.com/speedvibecode/sembl
-    rev: v0.1.18
+    rev: v0.1.19
     hooks: [{ id: sembl-verify }]
   ```
 - **Agent harnesses** — run verify the moment the agent stops editing. Claude Code

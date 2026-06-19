@@ -8,9 +8,9 @@ verifies the agent *stayed in those lines*. This adapter is the bridge — it
 reads a `tasks.md` and emits the four-field bounds contract `sembl verify` reads
 (see docs/bounds.md).
 
-It is deliberately conservative: it only extracts concrete file paths (a path
-segment plus a file extension), so `src/models/user.py` becomes an editable path
-but prose like "the auth module" does not. `forbidden_areas` cannot be inferred
+It is deliberately conservative: it only extracts concrete file paths (an optional
+directory prefix plus a `name.ext`), so `src/models/user.py` and a root-level
+`index.html` both become editable paths but prose like "the auth module" does not. `forbidden_areas` cannot be inferred
 from a task list and is left empty for the human to fill — verify treats scope
 as advisory and reserves BLOCK for forbidden hits and fabrication, so an empty
 forbidden list is safe, not silently permissive.
@@ -21,14 +21,17 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-# A concrete file path: one or more "segment/" parts followed by "name.ext".
-# Matched inside backticks or bare prose. Conservative on purpose — we want real
-# paths, not every slash-containing token. The extension must begin with a letter
-# (`[A-Za-z][A-Za-z0-9]{0,9}`): this is what separates `src/models/user.py` from
-# version strings and user-agents like `Werkzeug/2.2.2`, `Python/3.10.4`,
+# A concrete file path: zero or more "segment/" parts followed by "name.ext".
+# Matched inside backticks or bare prose. The directory prefix is OPTIONAL so a
+# bare, root-level file (`index.html`, `snake.js`, `README.md`, `package.json`)
+# is captured too — greenfield / root-file specs name those, and the old
+# slash-required pattern silently dropped them. Conservative on purpose — we want
+# real paths, not every slash-containing token. The extension must begin with a
+# letter (`[A-Za-z][A-Za-z0-9]{0,9}`): this is what separates `src/models/user.py`
+# from version strings and user-agents like `Werkzeug/2.2.2`, `Python/3.10.4`,
 # `HTTP/1.1`, `Chrome/65.0.3325.183`, which EXP-04 showed the old `[A-Za-z0-9]+`
 # extension happily matched as if they were files.
-_PATH_RE = re.compile(r"(?<![\w./-])((?:[\w.-]+/)+[\w.-]+\.[A-Za-z][A-Za-z0-9]{0,9})")
+_PATH_RE = re.compile(r"(?<![\w./-])((?:[\w.-]+/)*[\w.-]+\.[A-Za-z][A-Za-z0-9]{0,9})")
 
 
 def extract_paths(text: str, root: "Path | str | None" = None) -> list[str]:
@@ -50,6 +53,13 @@ def extract_paths(text: str, root: "Path | str | None" = None) -> list[str]:
         # scheme in the regex; skip markdown image/link artifacts just in case).
         if path.startswith(("http:", "https:")):
             continue
+        if "/" not in path:
+            # A bare, root-level filename. Allowed (greenfield/root-file specs need
+            # them), but prose abbreviations that look like name.ext — "e.g.", "i.e.",
+            # "U.S." — must not be mistaken for files. Real source/config files carry a
+            # 2+ char, letter-led extension; those abbreviations don't, so require it.
+            if len(path.rsplit(".", 1)[-1]) < 2:
+                continue
         if base is not None and not (base / path).is_file():
             continue
         seen.add(path)

@@ -55,6 +55,23 @@ def test_extract_paths_rejects_version_strings_and_useragents():
     assert extract_paths(text) == ["src/flask/app.py"]
 
 
+def test_extract_paths_finds_root_level_files():
+    # Greenfield / root-file specs name bare filenames (no directory). They must not be
+    # dropped — the old slash-required pattern made `sembl bounds` blind to them.
+    text = ("Create index.html, snake.js, and style.css; add a README.md and "
+            "a package.json at the repo root.")
+    assert extract_paths(text) == [
+        "index.html", "snake.js", "style.css", "README.md", "package.json",
+    ]
+
+
+def test_extract_paths_rejects_prose_abbreviations():
+    # Bare-filename matching must not mistake prose abbreviations that look like
+    # name.ext for files — they have a 1-char extension; real files have 2+.
+    text = "e.g. do this, i.e. that, common in the U.S. — then edit app.py"
+    assert extract_paths(text) == ["app.py"]
+
+
 def test_extract_paths_root_validation_filters_nonexistent(tmp_path):
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "real.py").write_text("x = 1\n", encoding="utf-8")
