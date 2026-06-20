@@ -75,8 +75,14 @@ sembl verify --wo-file bounds.json --report report.json --strict --json
 
 ## From GitHub Spec Kit
 
-Spec Kit's `tasks.md` lists the exact file paths for each task. Collect those
-paths into `editable_paths`, set `forbidden_areas` to whatever the spec declared
-off-limits (migrations, infra, generated code), and you have a bounds file. A
-small adapter that reads `specs/<feature>/tasks.md` and emits `bounds.json` is on
-the roadmap; until then the mapping is a copy of the paths Spec Kit already wrote.
+Spec Kit's `tasks.md` lists the exact file paths for each task. The built-in
+adapter reads them and emits a bounds file:
+
+```powershell
+sembl bounds --spec-kit specs/001-feature --out bounds.json
+```
+
+It pulls `editable_paths` from the paths Spec Kit already wrote and seeds a
+grounded churn budget. `forbidden_areas` (migrations, infra, generated code) and
+tighter size hints aren't in `tasks.md`, so add them by hand or via `--config` if
+the upstream spec doesn't declare them.

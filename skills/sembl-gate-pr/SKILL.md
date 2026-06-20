@@ -32,7 +32,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
-      - uses: speedvibecode/sembl@v0.1.17
+      - uses: speedvibecode/sembl@v0.1.18
 ```
 
 ## Reading the verdict

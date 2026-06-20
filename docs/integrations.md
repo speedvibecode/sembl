@@ -54,7 +54,7 @@ mechanism — the contract verify reads never changes, so the tail stays free.
 ```yaml
 - uses: actions/checkout@v4
   with: { fetch-depth: 0 }
-- uses: speedvibecode/sembl@v0.1.15
+- uses: speedvibecode/sembl@v0.1.18
   with:
     bounds: bounds.json
     strict: "false"   # advisory by default; true for a hard scope gate

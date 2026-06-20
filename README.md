@@ -139,7 +139,7 @@ Or use the GitHub Action on every pull request (see
 ```yaml
 - uses: actions/checkout@v4
   with: { fetch-depth: 0 }
-- uses: speedvibecode/sembl@v0.1.14
+- uses: speedvibecode/sembl@v0.1.18
   with:
     bounds: bounds.json
     strict: "false"   # advisory by default; true for a hard scope gate
