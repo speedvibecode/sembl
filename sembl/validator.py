@@ -553,10 +553,15 @@ _LOCKFILES = frozenset({
 _GENERATED_DIRS = frozenset({
     "node_modules", "vendor", "dist", "build", ".next", "__generated__",
     "__snapshots__", "generated",
+    # Interpreter/tool caches: an agent that runs or tests its code leaves these
+    # behind. They're machine-produced, never the substance of a change, and would
+    # otherwise false-flag as out-of-scope and blow the churn budget.
+    "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
 })
 _GENERATED_SUFFIXES = (
     ".min.js", ".min.css", ".map", ".pb.go", "_pb2.py", "_pb2.pyi",
     ".g.dart", ".freezed.dart", ".generated.ts",
+    ".pyc", ".pyo", ".pyd",          # compiled Python bytecode
 )
 
 
