@@ -32,6 +32,10 @@ Sembl-Product-Brief.docx
 # not shipped in the public package repo.
 sembl-research-markdown/
 
+# Local agent-tool state (Claude Code project settings, code-review graph cache)
+.claude/
+.code-review-graph/
+
 # OS/editor
 .DS_Store
 Thumbs.db
