@@ -54,7 +54,7 @@ mechanism — the contract verify reads never changes, so the tail stays free.
 ```yaml
 - uses: actions/checkout@v4
   with: { fetch-depth: 0 }
-- uses: speedvibecode/sembl@v0.1.18
+- uses: speedvibecode/sembl@v0.1.21
   with:
     bounds: bounds.json
     strict: "false"   # advisory by default; true for a hard scope gate
@@ -69,7 +69,7 @@ Add to `.pre-commit-config.yaml`:
 ```yaml
 repos:
   - repo: https://github.com/speedvibecode/sembl
-    rev: v0.1.15
+    rev: v0.1.21
     hooks:
       - id: sembl-verify
         # args: ["--strict"]

@@ -59,6 +59,10 @@ class ScopeReport:
     validation_not_run: list = field(default_factory=list)
     # Optional scope tolerance from the contract (see _scope_exceeds).
     scope_tolerance: dict = field(default_factory=dict)
+    # Gate-contract self-edits: the change modified the very contract judging it
+    # (bounds.json / .sembl work-order files / the supplied work-order file). Always
+    # a hard breach — a change that can rewrite its own bounds can whitelist anything.
+    contract_edits: list = field(default_factory=list)
 
     def _scope_exceeds(self) -> bool:
         # Whether out-of-scope edits should count toward the verdict. EXP-04/05
@@ -89,7 +93,9 @@ class ScopeReport:
         # "advisory_scope": out-of-scope edits demote to WARN; only forbidden hits
         #   and fabricated claims BLOCK. (Scope is advisory because declared
         #   editable_paths are rarely complete enough to gate on — see EXP-04/05.)
-        hard = bool(self.forbidden_hits or self.fabricated_claims)
+        # contract_edits is hard under EVERY policy: scope may be advisory, but the
+        # contract file itself is never editable by the change under review.
+        hard = bool(self.forbidden_hits or self.fabricated_claims or self.contract_edits)
         if policy == "advisory_scope":
             return hard
         return hard or self._scope_exceeds()
@@ -111,6 +117,9 @@ class ScopeReport:
     def reasons(self) -> list:
         """Human-readable reason per active finding, in verdict order."""
         out = []
+        if self.contract_edits:
+            out.append("gate-contract self-edit (the change modifies its own "
+                       f"bounds/work order): {', '.join(self.contract_edits)}")
         if self.forbidden_hits:
             out.append(f"forbidden-area edits: {', '.join(self.forbidden_hits)}")
         if self.out_of_scope:
@@ -145,12 +154,25 @@ class ScopeReport:
         return data
 
 
+def _is_contract_path(path: str, extra: list) -> bool:
+    """Is `path` part of the gate's own contract surface (never the change's to edit)?
+
+    Contract = the bounds/work-order files the verdict is computed FROM: root
+    `bounds.json`, `.sembl/bounds.json`, `.sembl/work-orders/`, plus any caller-named
+    work-order file (`extra`). Other `.sembl/` content (e.g. a run store's outputs)
+    is tool output, not contract — excluded from scope but never flagged.
+    """
+    return (path in ("bounds.json", ".sembl/bounds.json", ".sembl/work-orders")
+            or path.startswith(".sembl/work-orders/") or path in extra)
+
+
 def validate_against_work_order(
     repo_path: str,
     work_order: dict,
     report: dict | None = None,
     changed_files: list | None = None,
     diff_line_count: int | None = None,
+    contract_paths: list | None = None,
 ) -> ScopeReport:
     """Check a change against a Work Order contract.
 
@@ -165,11 +187,17 @@ def validate_against_work_order(
     forbidden = [_norm(p) for p in work_order.get("forbidden_areas") or []]
 
     result = ScopeReport()
+    contract = [_norm(p) for p in (contract_paths or []) if str(p).strip()]
     from_diff = changed_files is not None
     if from_diff:
-        result.changed_files = sorted({_norm(p) for p in changed_files if str(p).strip()})
+        seen = sorted({_norm(p) for p in changed_files if str(p).strip()})
+        result.contract_edits = [p for p in seen if _is_contract_path(p, contract)]
+        result.changed_files = [p for p in seen if not _is_contract_path(p, contract)]
     else:
-        result.changed_files = _git_changed_files(root)
+        hits: list = []
+        result.changed_files = _git_changed_files(root, contract_extra=contract,
+                                                   contract_hits=hits)
+        result.contract_edits = hits
 
     if "scope_tolerance" in work_order:
         result.scope_tolerance = dict(work_order.get("scope_tolerance") or {})
@@ -222,8 +250,10 @@ def parse_unified_diff(text: str) -> tuple[list, int]:
     cur_generated = False  # don't count churn lines for generated/lockfiles
 
     def _add(path: str) -> None:
+        if str(path).strip().strip('"') in ("/dev/null", "dev/null"):
+            return                       # add/delete sentinel, not a file
         path = _strip_ab(path)
-        if path and path != "/dev/null" and path not in seen:
+        if path and path not in seen:
             seen.add(path)
             files.append(path)
 
@@ -305,7 +335,8 @@ def _validation_not_run(report: dict) -> list:
     return out
 
 
-def _git_changed_files(root: Path) -> list:
+def _git_changed_files(root: Path, contract_extra: list | None = None,
+                       contract_hits: list | None = None) -> list:
     """Modified, staged, and untracked files vs HEAD, repo-relative posix paths.
 
     Tracked entries are cross-checked against `git diff HEAD --name-only`:
@@ -350,13 +381,25 @@ def _git_changed_files(root: Path) -> list:
         if " -> " in path:  # renames: take the new side
             path = path.split(" -> ", 1)[1].strip().strip('"')
         path = _norm(path)
-        # Sembl's own output, config, and graph artifacts are not executor work.
-        if path in (".sembl", "bounds.json") or path.startswith((".sembl/", "graphify-out/")):
-            continue
         if not path:
             continue
+        if path.startswith("graphify-out/"):
+            continue                        # graph artifacts: never executor work
         if code != "??" and content_changed is not None and path not in content_changed:
             continue  # EOL-only rewrite, not an edit
+        # The gate's own contract surface is excluded from scope BUT reported to the
+        # caller: a change that edits bounds.json / the work-order files is rewriting
+        # the very contract judging it, and must surface as a finding, not vanish.
+        # UNTRACKED contract files are the normal authoring flow (bounds.json is
+        # typically generated right before verify) and stay silently excluded — only
+        # a MODIFIED tracked contract file is a self-edit. Diff mode has no such
+        # ambiguity: there the diff IS the change, so any contract path in it flags.
+        if _is_contract_path(path, contract_extra or []):
+            if code != "??" and contract_hits is not None and path not in contract_hits:
+                contract_hits.append(path)
+            continue
+        if path == ".sembl" or path.startswith(".sembl/"):
+            continue                        # sembl's own outputs (runs, artifacts)
         files.append(path)
     return sorted(set(files))
 
@@ -511,10 +554,28 @@ def load_report(path: str) -> dict:
 
 
 def _norm(path: str) -> str:
+    """Normalize to a repo-relative POSIX path, neutralizing traversal.
+
+    Drive anchors (`C:`), leading slashes, `.` segments, and `..` segments are
+    collapsed lexically so a crafted diff path like `src/../infra/deploy.yaml`
+    cannot alias into a declared editable bound while actually touching a
+    forbidden area (it normalizes to `infra/deploy.yaml` and is judged as such).
+    A leading `..` has nowhere to go and is dropped — the path is always judged
+    repo-relative, never trusted to escape the root.
+    """
     path = str(path).strip().replace("\\", "/")
-    while path.startswith("./"):
-        path = path[2:]
-    return path.rstrip("/")
+    if len(path) >= 2 and path[1] == ":" and path[0].isalpha():
+        path = path[2:]                      # strip a Windows drive anchor
+    parts: list = []
+    for seg in path.split("/"):
+        if seg in ("", "."):
+            continue
+        if seg == "..":
+            if parts:
+                parts.pop()
+            continue
+        parts.append(seg)
+    return "/".join(parts)
 
 
 def _matches_any(path: str, entries: list) -> bool:

@@ -494,3 +494,99 @@ def test_scope_tolerance_override_max_files():
     files3 = ["src/a.py", "lib/x.py", "other/y.py"]     # 2 OOS > max_files 1
     over = validate_against_work_order(".", tol, changed_files=files3)
     assert over.verdict("advisory_scope") == "WARN"
+
+
+# --- gate-contract self-edits (0.1.21, audit P0) ----------------------------------
+
+def _commit(repo, msg="c"):
+    subprocess.run(["git", "add", "-A"], cwd=str(repo), check=True,
+                   capture_output=True, text=True)
+    subprocess.run(["git", "commit", "-q", "-m", msg], cwd=str(repo), check=True,
+                   capture_output=True, text=True)
+
+
+def test_tracked_bounds_edit_is_a_contract_finding_git_mode(git_repo):
+    # A change that rewrites its own (committed) bounds.json must BLOCK, not vanish.
+    (git_repo / "bounds.json").write_text(
+        json.dumps(WO), encoding="utf-8")
+    _commit(git_repo, "add bounds")
+    (git_repo / "bounds.json").write_text(
+        '{"editable_paths": ["**"]}', encoding="utf-8")
+    result = validate_against_work_order(str(git_repo), WO)
+    assert result.contract_edits == ["bounds.json"]
+    assert result.verdict("advisory_scope") == "BLOCK"   # hard under EVERY policy
+    assert result.verdict("strict") == "BLOCK"
+    assert "bounds.json" not in result.changed_files     # still excluded from scope
+
+
+def test_untracked_bounds_is_the_authoring_flow_not_a_finding(git_repo):
+    # Generating bounds.json right before verify (the normal local flow) must NOT
+    # flag — only a modified TRACKED contract file is a self-edit in git mode.
+    (git_repo / "bounds.json").write_text(json.dumps(WO), encoding="utf-8")
+    result = validate_against_work_order(str(git_repo), WO)
+    assert result.contract_edits == []
+    assert result.ok
+
+
+def test_tracked_work_order_edit_is_a_contract_finding(git_repo):
+    wo_dir = git_repo / ".sembl" / "work-orders" / "task"
+    wo_dir.mkdir(parents=True)
+    (wo_dir / "work-order.json").write_text("{}", encoding="utf-8")
+    _commit(git_repo, "add wo")
+    (wo_dir / "work-order.json").write_text('{"editable_paths": ["**"]}',
+                                            encoding="utf-8")
+    result = validate_against_work_order(str(git_repo), WO)
+    assert result.contract_edits == [".sembl/work-orders/task/work-order.json"]
+    assert result.verdict("advisory_scope") == "BLOCK"
+
+
+def test_sembl_run_outputs_are_not_contract(git_repo):
+    # A run store writing .sembl/runs/ is tool OUTPUT — excluded, never flagged.
+    runs = git_repo / ".sembl" / "runs" / "20260702-x"
+    runs.mkdir(parents=True)
+    (runs / "run.json").write_text("{}", encoding="utf-8")
+    result = validate_against_work_order(str(git_repo), WO)
+    assert result.contract_edits == []
+    assert result.changed_files == []
+    assert result.ok
+
+
+def test_bounds_edit_in_diff_mode_blocks():
+    wo = {"editable_paths": ["src/"]}
+    result = validate_against_work_order(
+        ".", wo, changed_files=["src/app.py", "bounds.json"])
+    assert result.contract_edits == ["bounds.json"]
+    assert result.changed_files == ["src/app.py"]
+    assert result.verdict("advisory_scope") == "BLOCK"
+
+
+def test_custom_work_order_file_is_contract_via_param():
+    wo = {"editable_paths": ["src/"]}
+    result = validate_against_work_order(
+        ".", wo, changed_files=["specs/001/bounds.json", "src/app.py"],
+        contract_paths=["specs/001/bounds.json"])
+    assert result.contract_edits == ["specs/001/bounds.json"]
+    assert result.verdict("advisory_scope") == "BLOCK"
+
+
+# --- path normalization rejects traversal aliases (0.1.21, audit P1) ---------------
+
+def test_traversal_path_cannot_alias_into_editable_scope():
+    # `src/../infra/deploy.yaml` LOOKS editable by prefix but actually touches
+    # infra/ — normalization must collapse it and judge the real target.
+    wo = {"editable_paths": ["src/"], "forbidden_areas": ["infra/"]}
+    result = validate_against_work_order(
+        ".", wo, changed_files=["src/../infra/deploy.yaml"])
+    assert result.forbidden_hits == ["infra/deploy.yaml"]
+
+
+def test_absolute_and_drive_paths_are_judged_repo_relative():
+    wo = {"editable_paths": ["src/"], "forbidden_areas": ["infra/"]}
+    result = validate_against_work_order(
+        ".", wo, changed_files=["C:/repo/infra/x.yaml", "/infra/y.yaml",
+                                "../../../src/ok.py"])
+    # Drive/absolute anchors are stripped; leading .. collapses away — every path
+    # is judged repo-relative (fail-closed against aliasing, no false escapes).
+    assert "src/ok.py" in result.in_scope
+    assert "infra/y.yaml" in result.forbidden_hits          # "/" anchor stripped
+    assert "repo/infra/x.yaml" in result.out_of_scope        # drive anchor stripped

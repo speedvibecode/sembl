@@ -487,10 +487,18 @@ def verify(repo, wo_id, wo_file, report_file, diff_file, as_json, strict):
             encoding="utf-8", errors="replace")
         changed_files, diff_lines = parse_unified_diff(diff_text)
 
+    # The work-order file itself is contract, not change: name it so an edit to it
+    # (wherever it lives) surfaces as a gate-contract self-edit finding.
+    try:
+        wo_rel = wo_json.resolve().relative_to(repo_path).as_posix()
+    except ValueError:
+        wo_rel = None                       # WO outside the repo: unreachable by the diff
+
     policy = "strict" if strict else "advisory_scope"
     result = validate_against_work_order(
         str(repo_path), work_order, report,
         changed_files=changed_files, diff_line_count=diff_lines,
+        contract_paths=[wo_rel] if wo_rel else None,
     )
     verdict = result.verdict(policy)
 
@@ -511,6 +519,9 @@ def verify(repo, wo_id, wo_file, report_file, diff_file, as_json, strict):
         "Forbidden hits",
         f"[red]{', '.join(result.forbidden_hits)}[/red]" if result.forbidden_hits else "[green]none[/green]",
     )
+    if result.contract_edits:
+        table.add_row("Contract self-edit",
+                      f"[red]{', '.join(result.contract_edits)}[/red]")
     if report is not None:
         table.add_row(
             "Fabricated claims",

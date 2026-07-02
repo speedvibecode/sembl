@@ -3,7 +3,7 @@
 # --wo-file to point elsewhere, and --strict for a hard scope gate.
 repos:
   - repo: https://github.com/speedvibecode/sembl
-    rev: v0.1.15
+    rev: v0.1.21
     hooks:
       - id: sembl-verify
         # args: ["--wo-file", "bounds.json", "--strict"]
