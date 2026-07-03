@@ -2,7 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/sembl.svg)](https://pypi.org/project/sembl/)
 [![Python](https://img.shields.io/pypi/pyversions/sembl.svg)](https://pypi.org/project/sembl/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 **A deterministic accountability gate for AI coding agents.**
 
