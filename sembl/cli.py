@@ -669,7 +669,14 @@ def list_orders(repo):
         console.print("[yellow]No Work Orders found.[/yellow] Run [bold]sembl generate[/bold].")
         return
 
-    dirs = sorted(sembl_dir.iterdir(), key=lambda d: d.stat().st_mtime, reverse=True)
+    # Newest first, by the work-order.json file's own mtime (the dir mtime
+    # doesn't move when the contract is regenerated in place).
+    dirs = sorted(
+        sembl_dir.iterdir(),
+        key=lambda d: ((d / "work-order.json").stat().st_mtime
+                       if (d / "work-order.json").is_file() else d.stat().st_mtime),
+        reverse=True,
+    )
     if not dirs:
         console.print("[yellow]No Work Orders found.[/yellow]")
         return
@@ -865,9 +872,13 @@ def _find_wo_dir(repo_path: Path, wo_id: str | None) -> Path | None:
     if wo_id:
         target = sembl_dir / wo_id
         return target if target.exists() else None
-    # Latest
-    dirs = sorted(sembl_dir.iterdir(), key=lambda d: d.stat().st_mtime, reverse=True)
-    return dirs[0] if dirs else None
+    # Latest — judged by the work-order.json file's own mtime, not the dir's:
+    # rewriting a file inside an existing slug dir doesn't bump the dir timestamp.
+    dirs = [d for d in sembl_dir.iterdir() if d.is_dir()]
+    with_wo = [d for d in dirs if (d / "work-order.json").is_file()]
+    if with_wo:
+        return max(with_wo, key=lambda d: (d / "work-order.json").stat().st_mtime)
+    return max(dirs, key=lambda d: d.stat().st_mtime) if dirs else None
 
 
 def _resolve_wo_json(repo_path: Path, wo_id: str | None, wo_file: str | None) -> Path | None:

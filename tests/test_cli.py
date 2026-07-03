@@ -167,5 +167,35 @@ class CliApiKeyMessageTests(unittest.TestCase):
         self.assertIn("--provider ollama", result.output)
 
 
+class FindWoDirTests(unittest.TestCase):
+    def test_latest_is_by_contract_file_mtime_not_dir_mtime(self):
+        # rewriting work-order.json in an EXISTING slug dir doesn't bump the dir
+        # mtime — "latest" must follow the contract file's own timestamp
+        import time
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wo_root = root / ".sembl" / "work-orders"
+            old, new = wo_root / "old-slug", wo_root / "new-slug"
+            for d in (old, new):
+                d.mkdir(parents=True)
+                (d / "work-order.json").write_text("{}", encoding="utf-8")
+            now = time.time()
+            # new-slug's DIR looks newest, but old-slug's FILE was regenerated last
+            os.utime(old / "work-order.json", (now + 100, now + 100))
+            os.utime(new / "work-order.json", (now, now))
+            os.utime(new, (now + 200, now + 200))
+            self.assertEqual(cli._find_wo_dir(root, None), old)
+
+    def test_dir_without_contract_never_shadows_one_with(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wo_root = root / ".sembl" / "work-orders"
+            has = wo_root / "has-contract"
+            has.mkdir(parents=True)
+            (has / "work-order.json").write_text("{}", encoding="utf-8")
+            (wo_root / "empty-but-newer").mkdir()
+            self.assertEqual(cli._find_wo_dir(root, None), has)
+
+
 if __name__ == "__main__":
     unittest.main()
