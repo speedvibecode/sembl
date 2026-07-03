@@ -182,10 +182,11 @@ def _discover_bounds_file(repo_path: str) -> Path | None:
     root = Path(repo_path)
     wo_root = root / ".sembl" / "work-orders"
     if wo_root.is_dir():
-        dirs = sorted(wo_root.iterdir(), key=lambda d: d.stat().st_mtime, reverse=True)
-        for d in dirs:
-            if (d / "work-order.json").is_file():
-                return d / "work-order.json"
+        # Sort by the contract file's own mtime, not the dir's: rewriting a file
+        # inside an existing slug dir doesn't bump the directory timestamp.
+        contracts = [p for d in wo_root.iterdir() if (p := d / "work-order.json").is_file()]
+        if contracts:
+            return max(contracts, key=lambda p: p.stat().st_mtime)
     for cand in (root / "bounds.json", root / ".sembl" / "bounds.json"):
         if cand.is_file():
             return cand
@@ -238,6 +239,9 @@ def gate_pr(
                     "it only exists on the remote).",
         }
 
+    # scope_tolerance is deliberately absent here: it tunes a contract, it isn't
+    # one — alone it must not suppress discovery (that would gate against an
+    # empty contract, which passes everything).
     if bounds_file is None and editable_paths is None and forbidden_areas is None \
             and churn_budget is None:
         discovered = _discover_bounds_file(repo_path)

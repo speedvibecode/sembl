@@ -269,6 +269,25 @@ def test_verify_change_malformed_bounds_file_raises(tmp_path, content):
         verify_change(diff=DIFF, bounds_file=str(b))
 
 
+def test_discover_bounds_prefers_freshest_work_order_file(tmp_path):
+    # rewriting work-order.json in an EXISTING slug dir doesn't bump the dir
+    # mtime — discovery must sort by the contract file's own mtime
+    import json, os, time
+    from sembl.mcp_server import _discover_bounds_file
+    wo_root = tmp_path / ".sembl" / "work-orders"
+    old, new = wo_root / "old-slug", wo_root / "new-slug"
+    for d in (old, new):
+        d.mkdir(parents=True)
+        (d / "work-order.json").write_text(json.dumps({"editable_paths": []}),
+                                           encoding="utf-8")
+    now = time.time()
+    # new-slug's DIR looks newest, but old-slug's FILE was regenerated last
+    os.utime(old / "work-order.json", (now + 100, now + 100))
+    os.utime(new / "work-order.json", (now, now))
+    found = _discover_bounds_file(str(tmp_path))
+    assert found == old / "work-order.json"
+
+
 def test_gate_pr_bad_bounds_is_structured_error(pr_repo):
     # gate_pr's contract is error dicts, never exceptions — even for bounds problems
     missing = gate_pr(repo_path=str(pr_repo), bounds_file="no-such-bounds.json")

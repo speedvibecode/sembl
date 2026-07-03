@@ -30,6 +30,7 @@ sembl-mcp          # speaks MCP over stdio
 
 | Tool | What it does |
 |------|--------------|
+| `gate_pr` | Gate a PR/branch in one call: picks the base ref, diffs `base...HEAD`, discovers the bounds contract, returns the verdict + a `pr` record. See the [IDE quickstart](../../docs/ide-quickstart.md). |
 | `verify_change` | Gate a diff: pass a unified `diff` + `editable_paths`/`forbidden_areas` (or a `bounds_file`) + an optional `report`; get PASS/WARN/BLOCK and per-check findings. |
 | `bounds_from_spec` | Derive bounds from a Spec Kit `tasks.md` (text/path), a preset, or a custom config. |
 | `list_presets` | The declarative bounds presets. |
