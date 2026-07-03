@@ -218,6 +218,15 @@ def test_gate_pr_bad_base_is_structured_error(pr_repo):
     assert "error" in out and "hint" in out
 
 
+@pytest.mark.parametrize("ref", ["--output=/tmp/x", "-v", "master...feature", "  "])
+def test_gate_pr_rejects_option_shaped_refs(pr_repo, ref):
+    # refs reach git argv: leading '-' is option injection, '...' rewrites semantics
+    out = gate_pr(repo_path=str(pr_repo), base=ref)
+    assert "error" in out and "invalid base ref" in out["error"]
+    out = gate_pr(repo_path=str(pr_repo), head=ref)
+    assert "error" in out and "invalid head ref" in out["error"]
+
+
 def test_gate_pr_no_bounds_is_structured_error(tmp_path):
     repo = tmp_path / "bare"
     repo.mkdir()

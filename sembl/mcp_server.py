@@ -206,6 +206,14 @@ def gate_pr(
     without a contract — an empty contract passes everything, which is false
     assurance, not a gate. Errors come back as {"error", "hint"}, never exceptions.
     """
+    # Caller-supplied refs reach git argv: a leading '-' would parse as an option
+    # (option injection), and '...' would silently change the diff semantics.
+    for name, ref in (("base", base), ("head", head)):
+        if ref is not None and (ref.startswith("-") or "..." in ref or not ref.strip()):
+            return {
+                "error": f"invalid {name} ref: {ref!r}",
+                "hint": "pass a plain branch/tag/commit ref (no leading '-', no '...').",
+            }
     if base is None:
         base = _detect_base(repo_path)
         if base is None:
