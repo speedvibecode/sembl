@@ -8,7 +8,14 @@ description: Use to gate a pull request or local diff with Sembl before it merge
 Run the deterministic accountability gate over a change before it merges. No model,
 no API key — same inputs, same verdict — so it's safe in CI.
 
-## Local diff
+## One call over MCP (preferred when the sembl server is registered)
+
+Call the **`gate_pr`** tool with `{"repo_path": "."}` — it picks the base ref,
+diffs `base...HEAD` (the branch's own commits only), discovers the bounds
+contract, and returns the verdict plus a `pr` record of what was gated. Options:
+`base`/`head`, `strict`, inline `editable_paths`/`forbidden_areas`, `report`.
+
+## Local diff (CLI)
 
 ```bash
 # working tree vs HEAD, or a specific patch
@@ -32,7 +39,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
-      - uses: speedvibecode/sembl@v0.1.21
+      - uses: speedvibecode/sembl@v0.2.0
 ```
 
 ## Reading the verdict

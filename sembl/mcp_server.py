@@ -14,6 +14,10 @@ and have no false-alarm problem (EXP-04/05):
 Scope adherence is an **optional** layer on top: only as good as the declared
 editable_paths, so it is advisory and tolerant by default (DEFAULT_SCOPE_TOLERANCE).
 
+The one-call form for IDE agents and CI is `gate_pr(repo_path=...)`: it picks
+the base ref, computes the branch diff, discovers the bounds contract, and
+returns the verdict — nothing to pre-assemble.
+
 The main-agent-verifies-sub-agent pattern (general case, no external tool):
   1. the sub-agent declares what it will touch (editable_paths) and reports what
      it did + whether it validated;
@@ -28,6 +32,7 @@ registers them on a FastMCP server over stdio. Requires the `mcp` extra:
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -44,11 +49,13 @@ def _build_work_order(
     scope_tolerance: dict | None,
     bounds_file: str | None,
     repo_path: str,
-) -> dict:
+) -> tuple[dict, Path | None]:
     """Assemble the bounds contract from inline fields or a bounds file.
 
     Inline fields win; a `bounds_file` (or a `bounds.json` at the repo root) is the
-    fallback. Returns the four-field contract verify reads."""
+    fallback. Returns (contract, source_path) — the path is None when the contract
+    is inline-only, and otherwise names the file so verify can treat an edit to it
+    as a gate-contract self-edit."""
     wo: dict = {}
     path = None
     if bounds_file:
@@ -59,6 +66,8 @@ def _build_work_order(
             path = default
     if path is not None and path.is_file():
         wo = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    else:
+        path = None
 
     if editable_paths is not None:
         wo["editable_paths"] = editable_paths
@@ -68,7 +77,21 @@ def _build_work_order(
         wo["churn_budget"] = churn_budget
     if scope_tolerance is not None:
         wo["scope_tolerance"] = scope_tolerance
-    return wo
+    return wo, path
+
+
+def _contract_rel(path: Path | None, repo_path: str) -> list | None:
+    """Repo-relative posix path of the bounds file, if it sits inside the repo.
+
+    A contract file outside the repo is unreachable by the diff and needs no
+    self-edit guard."""
+    if path is None:
+        return None
+    try:
+        rel = path.resolve().relative_to(Path(repo_path).resolve()).as_posix()
+    except (ValueError, OSError):
+        return None
+    return [rel]
 
 
 def verify_change(
@@ -90,7 +113,7 @@ def verify_change(
     trusted, only checked against reality. Bounds come from the inline fields or a
     `bounds_file` / repo-root `bounds.json`. `strict` promotes out-of-scope to BLOCK.
     """
-    wo = _build_work_order(
+    wo, wo_path = _build_work_order(
         editable_paths, forbidden_areas, churn_budget, scope_tolerance,
         bounds_file, repo_path,
     )
@@ -102,17 +125,133 @@ def verify_change(
     result = validate_against_work_order(
         repo_path, wo, report,
         changed_files=changed_files, diff_line_count=diff_lines,
+        contract_paths=_contract_rel(wo_path, repo_path),
     )
     data = result.to_dict(policy)
     data["summary"] = {
         "verdict": data["verdict"],
         "files_changed": len(result.changed_files),
-        "blocking": bool(result.forbidden_hits or result.fabricated_claims),
+        "blocking": bool(result.forbidden_hits or result.fabricated_claims
+                         or result.contract_edits),
         "out_of_scope": result.out_of_scope,
         "forbidden_hits": result.forbidden_hits,
         "fabricated_claims": result.fabricated_claims,
         "validation_not_evidenced": result.validation_not_run,
         "reasons": result.reasons(),
+    }
+    return data
+
+
+_BASE_CANDIDATES = ("origin/main", "origin/master", "main", "master")
+
+
+def _git(repo_path: str, *args: str) -> str | None:
+    """Run a git command in `repo_path`; stdout on success, None on any failure."""
+    try:
+        proc = subprocess.run(
+            ["git", *args], cwd=repo_path, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=60,
+        )
+    except Exception:
+        return None
+    return proc.stdout if proc.returncode == 0 else None
+
+
+def _detect_base(repo_path: str) -> str | None:
+    """Pick the PR base ref: the remote's default branch, then main/master."""
+    head = _git(repo_path, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+    candidates = ([head.strip()] if head else []) + list(_BASE_CANDIDATES)
+    for ref in candidates:
+        if _git(repo_path, "rev-parse", "--verify", "--quiet", ref + "^{commit}"):
+            return ref
+    return None
+
+
+def _discover_bounds_file(repo_path: str) -> Path | None:
+    """The CLI's zero-arg bounds discovery: latest generated Work Order, then a
+    conventional bounds file (`bounds.json`, then `.sembl/bounds.json`)."""
+    root = Path(repo_path)
+    wo_root = root / ".sembl" / "work-orders"
+    if wo_root.is_dir():
+        dirs = sorted(wo_root.iterdir(), key=lambda d: d.stat().st_mtime, reverse=True)
+        for d in dirs:
+            if (d / "work-order.json").is_file():
+                return d / "work-order.json"
+    for cand in (root / "bounds.json", root / ".sembl" / "bounds.json"):
+        if cand.is_file():
+            return cand
+    return None
+
+
+def gate_pr(
+    repo_path: str = ".",
+    base: str | None = None,
+    head: str = "HEAD",
+    bounds_file: str | None = None,
+    editable_paths: list | None = None,
+    forbidden_areas: list | None = None,
+    churn_budget: dict | None = None,
+    scope_tolerance: dict | None = None,
+    report: dict | None = None,
+    strict: bool = False,
+) -> dict:
+    """Gate a PR/branch in one call: compute the diff and the bounds, return the verdict.
+
+    The one-call form of the gate for IDE agents and CI: point it at a checkout and
+    it (1) picks the base ref (or takes yours), (2) diffs `base...head` (merge-base
+    semantics — the branch's own commits only), (3) finds the bounds contract
+    (inline fields win, then `bounds_file`, then the repo's work-order/bounds.json),
+    and (4) returns the same deterministic PASS/WARN/BLOCK verdict as
+    `verify_change`, plus a `pr` record of exactly what was gated. Refuses to run
+    without a contract — an empty contract passes everything, which is false
+    assurance, not a gate. Errors come back as {"error", "hint"}, never exceptions.
+    """
+    if base is None:
+        base = _detect_base(repo_path)
+        if base is None:
+            return {
+                "error": "no base ref found",
+                "hint": "no origin/HEAD, main, or master in this repo — pass "
+                        "base='<ref>' explicitly (the branch the PR merges into).",
+            }
+    elif not _git(repo_path, "rev-parse", "--verify", "--quiet", base + "^{commit}"):
+        return {
+            "error": f"base ref not found: {base}",
+            "hint": "pass a ref that exists in this checkout (fetch it first if "
+                    "it only exists on the remote).",
+        }
+
+    if bounds_file is None and editable_paths is None and forbidden_areas is None \
+            and churn_budget is None:
+        discovered = _discover_bounds_file(repo_path)
+        if discovered is None:
+            return {
+                "error": "no bounds contract found",
+                "hint": "add a bounds.json at the repo root (e.g. via the "
+                        "bounds_from_spec tool or `sembl bounds`), or pass "
+                        "bounds_file / inline editable_paths+forbidden_areas.",
+            }
+        bounds_file = str(discovered)
+
+    diff_text = _git(repo_path, "diff", f"{base}...{head}")
+    if diff_text is None:
+        return {
+            "error": f"git diff {base}...{head} failed",
+            "hint": "check that repo_path is a git checkout and head is a valid ref.",
+        }
+
+    data = verify_change(
+        diff=diff_text, repo_path=repo_path,
+        editable_paths=editable_paths, forbidden_areas=forbidden_areas,
+        churn_budget=churn_budget, scope_tolerance=scope_tolerance,
+        report=report, bounds_file=bounds_file, strict=strict,
+    )
+    merge_base = _git(repo_path, "merge-base", base, head)
+    data["pr"] = {
+        "base": base,
+        "head": head,
+        "merge_base": merge_base.strip() if merge_base else None,
+        "bounds_source": bounds_file,
     }
     return data
 
@@ -226,7 +365,8 @@ def build_server() -> Any:
 
     server = FastMCP("sembl")
     for fn in (
-        verify_change,        # the gate (headline)
+        gate_pr,              # one-call "gate this PR" (headline)
+        verify_change,        # the gate, bring-your-own diff/contract
         bounds_from_spec,     # bounds from spec / preset / config
         list_presets,
         doctor,               # deterministic repo diagnostics

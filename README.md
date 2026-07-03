@@ -139,7 +139,7 @@ Or use the GitHub Action on every pull request (see
 ```yaml
 - uses: actions/checkout@v4
   with: { fetch-depth: 0 }
-- uses: speedvibecode/sembl@v0.1.21
+- uses: speedvibecode/sembl@v0.2.0
   with:
     bounds: bounds.json
     strict: "false"   # advisory by default; true for a hard scope gate
@@ -155,7 +155,7 @@ command. Full recipes: [`docs/integrations.md`](docs/integrations.md).
 - **pre-commit** — gate local commits:
   ```yaml
   - repo: https://github.com/speedvibecode/sembl
-    rev: v0.1.21
+    rev: v0.2.0
     hooks: [{ id: sembl-verify }]
   ```
 - **Agent harnesses** — run verify the moment the agent stops editing. Claude Code
@@ -172,9 +172,11 @@ command. Full recipes: [`docs/integrations.md`](docs/integrations.md).
     }
   }
   ```
-  Or `pip install "sembl[mcp]"` and run `sembl-mcp`. Tools: `verify_change`,
-  `bounds_from_spec`, `list_presets`, `doctor`, plus beta `clarify_task` /
-  `generate_work_order` (the full CLI surface). Example config in
+  Or `pip install "sembl[mcp]"` and run `sembl-mcp`. Tools: `gate_pr` (one call —
+  picks the base ref, diffs the branch, discovers bounds, returns the verdict),
+  `verify_change`, `bounds_from_spec`, `list_presets`, `doctor`, plus beta
+  `clarify_task` / `generate_work_order` (the full CLI surface). IDE setup in
+  [`docs/ide-quickstart.md`](docs/ide-quickstart.md); example config in
   [`examples/mcp/`](examples/mcp/); recipes in [`docs/integrations.md`](docs/integrations.md).
 - **Agent Skills** — drop-in skills in [`skills/`](skills/) (copy to
   `.claude/skills/`): `sembl-verify-subagent` (main-agent-verifies-sub-agent),

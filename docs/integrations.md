@@ -54,7 +54,7 @@ mechanism — the contract verify reads never changes, so the tail stays free.
 ```yaml
 - uses: actions/checkout@v4
   with: { fetch-depth: 0 }
-- uses: speedvibecode/sembl@v0.1.21
+- uses: speedvibecode/sembl@v0.2.0
   with:
     bounds: bounds.json
     strict: "false"   # advisory by default; true for a hard scope gate
@@ -69,7 +69,7 @@ Add to `.pre-commit-config.yaml`:
 ```yaml
 repos:
   - repo: https://github.com/speedvibecode/sembl
-    rev: v0.1.21
+    rev: v0.2.0
     hooks:
       - id: sembl-verify
         # args: ["--strict"]
@@ -118,8 +118,12 @@ pip install "sembl[mcp]"
 sembl-mcp            # speaks MCP over stdio
 ```
 
-Register it with any MCP client (Claude Code, etc.). It exposes three tools:
+Register it with any MCP client (Claude Code, Cursor, VS Code — see the
+[IDE quickstart](ide-quickstart.md)). The main tools:
 
+- **`gate_pr`** — the one-call form. Point it at a checkout and it picks the
+  base ref, diffs `base...HEAD`, discovers the bounds contract, and returns the
+  verdict — nothing to pre-assemble.
 - **`verify_change`** — the gate. Pass a unified `diff` (no checkout needed) plus
   `editable_paths` / `forbidden_areas` / `churn_budget` (or a `bounds_file`) and an
   optional `report` of what the actor claims it did. Returns the PASS/WARN/BLOCK
