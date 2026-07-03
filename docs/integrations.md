@@ -75,8 +75,9 @@ repos:
         # args: ["--strict"]
 ```
 
-`pre-commit install`, then every commit runs `sembl verify` against the staged
-change and your `bounds.json`.
+`pre-commit install`, then every commit runs `sembl verify --staged` against
+exactly the staged change (git index vs HEAD) and your `bounds.json` — other
+uncommitted work in the tree never leaks into the verdict.
 
 ### Agent harnesses (post-edit, in-loop)
 
@@ -156,7 +157,7 @@ deterministically, with no second LLM in the loop.
 Every integration above is a trigger for:
 
 ```
-sembl verify [--wo-file bounds.json] [--diff <patch>|-] [--report <agent.json>] [--strict]
+sembl verify [--wo-file bounds.json] [--diff <patch>|- | --staged] [--report <agent.json>] [--strict]
 ```
 
 Deterministic, executor-neutral, no model in the loop — same inputs, same verdict.

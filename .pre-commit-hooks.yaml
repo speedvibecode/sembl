@@ -1,7 +1,7 @@
 - id: sembl-verify
   name: sembl verify
   description: "Deterministic accountability gate — check the staged change stayed in declared bounds (bounds.json) and didn't fabricate its results."
-  entry: sembl verify
+  entry: sembl verify --staged
   language: python
   pass_filenames: false
   always_run: true

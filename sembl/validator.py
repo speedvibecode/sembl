@@ -27,7 +27,9 @@ The verdict() rolls these into PASS / WARN / BLOCK.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -162,8 +164,10 @@ def _is_contract_path(path: str, extra: list) -> bool:
     work-order file (`extra`). Other `.sembl/` content (e.g. a run store's outputs)
     is tool output, not contract — excluded from scope but never flagged.
     """
-    return (path in ("bounds.json", ".sembl/bounds.json", ".sembl/work-orders")
-            or path.startswith(".sembl/work-orders/") or path in extra)
+    folded = _fold(path)
+    return (folded in ("bounds.json", ".sembl/bounds.json", ".sembl/work-orders")
+            or folded.startswith(".sembl/work-orders/")
+            or any(folded == _fold(str(entry)) for entry in extra))
 
 
 def validate_against_work_order(
@@ -218,10 +222,13 @@ def validate_against_work_order(
 
     if report is not None:
         result.claimed_files = [_norm(p) for p in _claimed_files(report)]
-        changed = set(result.changed_files)
-        result.fabricated_claims = [p for p in result.claimed_files if p not in changed]
+        changed = {_fold(p) for p in result.changed_files}
+        result.fabricated_claims = [
+            p for p in result.claimed_files if _fold(p) not in changed
+        ]
+        claimed = {_fold(p) for p in result.claimed_files}
         result.unreported_changes = [
-            p for p in result.changed_files if p not in set(result.claimed_files)
+            p for p in result.changed_files if _fold(p) not in claimed
         ]
         result.validation_not_run = _validation_not_run(report)
 
@@ -578,11 +585,27 @@ def _norm(path: str) -> str:
     return "/".join(parts)
 
 
+# Case-insensitive filesystems (Windows, default macOS): `Src/App.py` and
+# `src/app.py` are the same file there, so a case-only mismatch between the
+# contract, the diff, and the report must not false-flag out-of-scope or
+# fabrication. Folding is platform-gated: on a case-sensitive filesystem those
+# ARE two different paths, and folding would quietly widen editable bounds
+# (fail-open). Original casing is preserved in every report field — paths are
+# folded only at comparison time.
+_CASEFOLD_PATHS = os.name == "nt" or sys.platform == "darwin"
+
+
+def _fold(path: str) -> str:
+    return path.casefold() if _CASEFOLD_PATHS else path
+
+
 def _matches_any(path: str, entries: list) -> bool:
+    folded = _fold(path)
     for entry in entries:
         if not entry:
             continue
-        if path == entry or path.startswith(entry + "/"):
+        entry = _fold(entry)
+        if folded == entry or folded.startswith(entry + "/"):
             return True
     return False
 

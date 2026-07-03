@@ -141,6 +141,79 @@ class VerifyCommandTests(unittest.TestCase):
         self.assertEqual(strict.exit_code, 1)
 
 
+class VerifyStagedTests(unittest.TestCase):
+    """--staged gates the index (the commit being made), not the whole worktree."""
+
+    def _run_git(self, repo: Path, *args):
+        subprocess.run(["git", *args], cwd=str(repo), check=True,
+                       capture_output=True, text=True)
+
+    def test_staged_ignores_unstaged_worktree_noise(self):
+        # An out-of-scope UNSTAGED edit must not pollute the verdict on the
+        # staged, in-scope change — the pre-commit-hook scenario.
+        runner = CliRunner()
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            _init_repo(repo)
+            wo = _write_wo(repo)                       # editable: src/a.py only
+            (repo / "src" / "a.py").write_text("FIXED\n", encoding="utf-8")
+            self._run_git(repo, "add", "src/a.py")
+            (repo / "src" / "b.py").write_text("UNSTAGED WIP\n", encoding="utf-8")
+
+            staged = runner.invoke(cli.main,
+                ["verify", "--repo", tmp, "--wo-file", str(wo), "--staged", "--strict"])
+            worktree = runner.invoke(cli.main,
+                ["verify", "--repo", tmp, "--wo-file", str(wo), "--strict"])
+        self.assertEqual(staged.exit_code, 0, staged.output)
+        self.assertIn("PASS", staged.output)
+        # sanity: the default worktree mode DOES see the noise
+        self.assertEqual(worktree.exit_code, 1)
+
+    def test_staged_catches_a_staged_forbidden_edit(self):
+        runner = CliRunner()
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            _init_repo(repo)
+            wo = _write_wo(repo, forbidden_areas=["src/b.py"])
+            (repo / "src" / "b.py").write_text("SNEAKY\n", encoding="utf-8")
+            self._run_git(repo, "add", "src/b.py")
+            result = runner.invoke(cli.main,
+                ["verify", "--repo", tmp, "--wo-file", str(wo), "--staged"])
+        self.assertEqual(result.exit_code, 1)
+        self.assertIn("BLOCK", result.output)
+
+    def test_staged_and_diff_are_mutually_exclusive(self):
+        runner = CliRunner()
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            _init_repo(repo)
+            wo = _write_wo(repo)
+            patch_file = repo / "x.patch"
+            patch_file.write_text("", encoding="utf-8")
+            result = runner.invoke(cli.main,
+                ["verify", "--repo", tmp, "--wo-file", str(wo),
+                 "--staged", "--diff", str(patch_file)])
+        self.assertEqual(result.exit_code, 1)
+        self.assertIn("mutually exclusive", result.output)
+
+    def test_staged_works_on_an_unborn_branch(self):
+        # The repo's very first commit: git diff --cached diffs the empty tree.
+        runner = CliRunner()
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            self._run_git(repo, "init", "-q")
+            self._run_git(repo, "config", "user.email", "t@example.com")
+            self._run_git(repo, "config", "user.name", "t")
+            (repo / "src").mkdir()
+            (repo / "src" / "a.py").write_text("NEW\n", encoding="utf-8")
+            self._run_git(repo, "add", "-A")
+            wo = _write_wo(repo)
+            result = runner.invoke(cli.main,
+                ["verify", "--repo", tmp, "--wo-file", str(wo), "--staged"])
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("PASS", result.output)
+
+
 class CliApiKeyMessageTests(unittest.TestCase):
     def test_missing_provider_key_message_names_provider_and_env_var(self):
         runner = CliRunner()

@@ -439,12 +439,16 @@ def validate(repo, wo_id, wo_file, report_file):
               type=click.Path(exists=True, allow_dash=True),
               help="A unified diff / .patch to verify instead of the working tree "
                    "(for CI / code review — no checkout needed). Use '-' for stdin.")
+@click.option("--staged", is_flag=True, default=False,
+              help="Verify the staged change (git index vs HEAD) instead of the "
+                   "whole working tree — what a pre-commit hook should gate. "
+                   "Mutually exclusive with --diff.")
 @click.option("--json", "as_json", is_flag=True, default=False,
               help="Emit the full verdict as JSON (for tooling / experiments).")
 @click.option("--strict", is_flag=True, default=False,
               help="Strict gate: out-of-scope edits BLOCK (not just WARN), and any "
                    "WARN becomes a failing exit code. Use in CI for a hard gate.")
-def verify(repo, wo_id, wo_file, report_file, diff_file, as_json, strict):
+def verify(repo, wo_id, wo_file, report_file, diff_file, staged, as_json, strict):
     """Verify the actual diff against a Work Order and return a PASS/WARN/BLOCK verdict.
 
     The change-control verdict layer: deterministic checks only — scope adherence,
@@ -456,6 +460,10 @@ def verify(repo, wo_id, wo_file, report_file, diff_file, as_json, strict):
     edits and fabricated claims BLOCK — auto/loose bounds otherwise cause false
     blocks on legitimate related changes (config, manifests). Pass --strict to make
     out-of-scope a hard BLOCK and fail on any WARN.
+
+    Three change sources: the working tree (default), a patch file (--diff, for
+    CI / code review), or the git index (--staged, for pre-commit hooks — gates
+    exactly the commit being made).
 
     Exit codes: PASS=0, WARN=0 (1 with --strict), BLOCK=1.
     """
@@ -482,7 +490,19 @@ def verify(repo, wo_id, wo_file, report_file, diff_file, as_json, strict):
 
     # Diff mode (CI / code review): score a patch directly, no working tree needed.
     changed_files = diff_lines = None
-    if diff_file:
+    if staged and diff_file:
+        console.print("[red]--staged and --diff are mutually exclusive.[/red]")
+        sys.exit(1)
+    if staged:
+        # Pre-commit hooks run against the index: gate exactly the commit being
+        # made, not whatever else is sitting in the working tree.
+        diff_text = _staged_diff(repo_path)
+        if diff_text is None:
+            console.print("[red]Could not read the staged diff[/red] "
+                          "(is this a git repository?)")
+            sys.exit(1)
+        changed_files, diff_lines = parse_unified_diff(diff_text)
+    elif diff_file:
         diff_text = sys.stdin.read() if diff_file == "-" else Path(diff_file).read_text(
             encoding="utf-8", errors="replace")
         changed_files, diff_lines = parse_unified_diff(diff_text)
@@ -556,6 +576,23 @@ def verify(repo, wo_id, wo_file, report_file, diff_file, as_json, strict):
         border_style=style,
     ))
     sys.exit(_verify_exit_code(verdict, strict))
+
+
+def _staged_diff(repo_path: Path) -> str | None:
+    """The staged change (index vs HEAD) as a unified diff; None if git fails.
+
+    `git diff --cached` also works on an unborn branch (it diffs against the
+    empty tree), so a repo's very first commit is gated too.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "diff", "--cached", "--no-ext-diff", "--no-color"],
+            cwd=str(repo_path), capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30,
+        )
+    except Exception:
+        return None
+    return proc.stdout if proc.returncode == 0 else None
 
 
 def _verify_exit_code(verdict: str, strict: bool) -> int:

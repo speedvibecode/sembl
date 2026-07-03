@@ -590,3 +590,56 @@ def test_absolute_and_drive_paths_are_judged_repo_relative():
     assert "src/ok.py" in result.in_scope
     assert "infra/y.yaml" in result.forbidden_hits          # "/" anchor stripped
     assert "repo/infra/x.yaml" in result.out_of_scope        # drive anchor stripped
+
+
+# ── case-insensitive path comparison (Windows / macOS filesystems) ─────────────
+# On a case-insensitive filesystem `Src/App.py` IS `src/app.py`; a case-only
+# mismatch between contract, diff, and report must not false-flag out-of-scope
+# or fabrication. On case-sensitive filesystems those are two different paths
+# and folding stays OFF (it would silently widen editable bounds).
+
+def test_case_only_mismatch_is_in_scope_when_folding(monkeypatch):
+    from sembl import validator
+    monkeypatch.setattr(validator, "_CASEFOLD_PATHS", True)
+    wo = {"editable_paths": ["src/"], "forbidden_areas": []}
+    result = validate_against_work_order(".", wo, changed_files=["Src/App.py"])
+    assert result.in_scope == ["Src/App.py"]      # original casing preserved
+    assert result.out_of_scope == []
+
+
+def test_case_only_mismatch_is_out_of_scope_without_folding(monkeypatch):
+    from sembl import validator
+    monkeypatch.setattr(validator, "_CASEFOLD_PATHS", False)
+    wo = {"editable_paths": ["src/"], "forbidden_areas": []}
+    result = validate_against_work_order(".", wo, changed_files=["Src/App.py"])
+    assert result.out_of_scope == ["Src/App.py"]
+
+
+def test_forbidden_match_folds_case(monkeypatch):
+    from sembl import validator
+    monkeypatch.setattr(validator, "_CASEFOLD_PATHS", True)
+    wo = {"editable_paths": [], "forbidden_areas": ["Infra/"]}
+    result = validate_against_work_order(".", wo, changed_files=["infra/deploy.yaml"])
+    assert result.forbidden_hits == ["infra/deploy.yaml"]
+
+
+def test_case_only_claim_is_not_fabrication_when_folding(monkeypatch):
+    from sembl import validator
+    monkeypatch.setattr(validator, "_CASEFOLD_PATHS", True)
+    wo = {"editable_paths": ["src/"], "forbidden_areas": []}
+    report = {"modified_files": ["SRC/app.py"]}
+    result = validate_against_work_order(
+        ".", wo, report=report, changed_files=["src/app.py"])
+    assert result.fabricated_claims == []
+    assert result.unreported_changes == []
+
+
+def test_contract_path_folds_case(monkeypatch):
+    from sembl import validator
+    monkeypatch.setattr(validator, "_CASEFOLD_PATHS", True)
+    wo = {"editable_paths": ["src/"], "forbidden_areas": []}
+    result = validate_against_work_order(
+        ".", wo, changed_files=["Bounds.json", "src/ok.py"])
+    # a case-twisted edit of the gate's own contract still surfaces as one
+    assert result.contract_edits == ["Bounds.json"]
+    assert result.changed_files == ["src/ok.py"]
