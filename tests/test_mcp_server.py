@@ -246,6 +246,38 @@ def test_gate_pr_not_a_repo_is_structured_error(tmp_path):
     assert "error" in out and "hint" in out
 
 
+def test_verify_change_missing_named_bounds_file_raises(tmp_path):
+    # an explicitly named contract that doesn't exist must never silently become
+    # an empty contract (empty passes everything)
+    with pytest.raises(FileNotFoundError):
+        verify_change(diff=DIFF, bounds_file=str(tmp_path / "nope.json"))
+
+
+def test_verify_change_relative_bounds_file_resolves_under_repo(tmp_path):
+    import json
+    (tmp_path / "bounds.json").write_text(
+        json.dumps({"editable_paths": ["src/", "infra/"]}), encoding="utf-8")
+    out = verify_change(diff=DIFF, repo_path=str(tmp_path), bounds_file="bounds.json")
+    assert out["verdict"] == "PASS"
+
+
+@pytest.mark.parametrize("content", ["{not json", '["a", "list"]'])
+def test_verify_change_malformed_bounds_file_raises(tmp_path, content):
+    b = tmp_path / "bounds.json"
+    b.write_text(content, encoding="utf-8")
+    with pytest.raises(ValueError):
+        verify_change(diff=DIFF, bounds_file=str(b))
+
+
+def test_gate_pr_bad_bounds_is_structured_error(pr_repo):
+    # gate_pr's contract is error dicts, never exceptions — even for bounds problems
+    missing = gate_pr(repo_path=str(pr_repo), bounds_file="no-such-bounds.json")
+    assert "error" in missing and "hint" in missing
+    (pr_repo / "bounds.json").write_text("{broken", encoding="utf-8")
+    malformed = gate_pr(repo_path=str(pr_repo))
+    assert "error" in malformed and "not valid JSON" in malformed["error"]
+
+
 @pytest.mark.skipif(not HAS_MCP, reason="requires the 'mcp' extra")
 def test_all_fronts_registered():
     # The MCP surface mirrors the CLI: gate + bounds + diagnostics + beta generation.

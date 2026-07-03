@@ -60,14 +60,23 @@ def _build_work_order(
     path = None
     if bounds_file:
         path = Path(bounds_file)
+        if not path.is_absolute():          # caller means "inside the repo", not our cwd
+            path = Path(repo_path) / path
+        if not path.is_file():
+            # An explicitly named contract that doesn't exist must never silently
+            # become an empty contract — empty passes everything (false assurance).
+            raise FileNotFoundError(f"bounds file not found: {path}")
     else:
         default = Path(repo_path) / "bounds.json"
         if default.is_file():
             path = default
-    if path is not None and path.is_file():
-        wo = json.loads(path.read_text(encoding="utf-8", errors="replace"))
-    else:
-        path = None
+    if path is not None:
+        try:
+            wo = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"bounds file is not valid JSON: {path} ({exc})") from exc
+        if not isinstance(wo, dict):
+            raise ValueError(f"bounds file must contain a JSON object: {path}")
 
     if editable_paths is not None:
         wo["editable_paths"] = editable_paths
@@ -248,12 +257,20 @@ def gate_pr(
             "hint": "check that repo_path is a git checkout and head is a valid ref.",
         }
 
-    data = verify_change(
-        diff=diff_text, repo_path=repo_path,
-        editable_paths=editable_paths, forbidden_areas=forbidden_areas,
-        churn_budget=churn_budget, scope_tolerance=scope_tolerance,
-        report=report, bounds_file=bounds_file, strict=strict,
-    )
+    try:
+        data = verify_change(
+            diff=diff_text, repo_path=repo_path,
+            editable_paths=editable_paths, forbidden_areas=forbidden_areas,
+            churn_budget=churn_budget, scope_tolerance=scope_tolerance,
+            report=report, bounds_file=bounds_file, strict=strict,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        # Keep the docstring contract: gate_pr reports errors, it never raises.
+        return {
+            "error": str(exc),
+            "hint": "fix or remove the bounds file, or pass inline "
+                    "editable_paths/forbidden_areas instead.",
+        }
     merge_base = _git(repo_path, "merge-base", base, head)
     data["pr"] = {
         "base": base,
