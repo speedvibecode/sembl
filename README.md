@@ -22,6 +22,11 @@ run in CI**. Same inputs, same verdict, every time.
 
 [Website](https://sembl.vercel.app) | [PyPI](https://pypi.org/project/sembl/) | [Issues](https://github.com/speedvibecode/sembl/issues)
 
+> Sembl is the **gate**. If you want the whole pipeline — spec → bounds →
+> executor → gate → merge, with every stage swappable and every artifact
+> recorded — that's **[sembl-stack](https://github.com/speedvibecode/sembl-stack)**
+> ([site](https://sembl-stack.vercel.app)), which runs this gate at its core.
+
 ## Why
 
 AI agents are strong executors. The gap is no longer writing the code — it is
@@ -152,7 +157,9 @@ root, so most integrations run zero-arg. Every one is just a trigger for the sam
 command. Full recipes: [`docs/integrations.md`](docs/integrations.md).
 
 - **GitHub Action** — gate every PR (above).
-- **pre-commit** — gate local commits:
+- **pre-commit** — gate local commits. The hook runs `verify --staged`, so it
+  scores exactly the commit being made — unstaged worktree noise never leaks
+  into the verdict:
   ```yaml
   - repo: https://github.com/speedvibecode/sembl
     rev: v0.2.0
