@@ -20,7 +20,8 @@ class RepoProbeCrgEnvTests(unittest.TestCase):
         with patch.dict(os.environ, {"CRG_DATA_DIR": "C:/tmp/repo"}, clear=True):
             self.assertEqual(
                 _crg_common_args(Path("C:/repo")),
-                ["--repo", "C:\\repo", "--data-dir", "C:/tmp/repo"],
+                # str(Path("C:/repo")) — "C:\repo" on Windows, "C:/repo" on POSIX
+                ["--repo", str(Path("C:/repo")), "--data-dir", "C:/tmp/repo"],
             )
 
     def test_crg_common_args_ignores_stale_generic_crg_data_dir(self):
@@ -37,7 +38,7 @@ class RepoProbeCrgEnvTests(unittest.TestCase):
         ):
             self.assertEqual(
                 _crg_common_args(Path("C:/repo")),
-                ["--repo", "C:\\repo", "--data-dir", "C:/tmp/sembl-crg"],
+                ["--repo", str(Path("C:/repo")), "--data-dir", "C:/tmp/sembl-crg"],
             )
 
     def test_crg_env_sets_python_io_encoding(self):
