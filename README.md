@@ -228,50 +228,17 @@ in declared bounds and didn't fabricate its results.
 
 ---
 
-## Beta: Work Order generation
+## Beta: Work Order generation (optional)
 
-> **Optional and unproven.** Everything in this section is the older generation
-> half of Sembl. It produces a "Work Order" — a scoped contract + executor prompt
-> + a `work-order.json` that `verify` can read directly. It is interchangeable
-> with GitHub Spec Kit and similar tools; reach for it only if you don't already
-> have a spec/planning step.
-
-```powershell
-# core (generation uses an LLM provider)
-pip install sembl
-
-# with optional graph context (Graphify + code-review-graph)
-pip install "sembl[graph-pipeline]"
-```
-
-Set one provider key, then generate:
-
-```powershell
-$env:OPENAI_API_KEY="..."   # or ANTHROPIC_API_KEY / GEMINI_API_KEY / NVIDIA_API_KEY / OPENROUTER_API_KEY
-sembl generate --repo C:\path\to\repo --task "fix the failing login redirect test" --provider openai
-```
-
-Providers: `openai`, `anthropic`, `gemini`, `nvidia`, `openrouter`, `tokenrouter`,
-local `ollama`, and `claude-cli`. Output lands in
-`.sembl/work-orders/wo-...{slug}/` as `work-order.md`, `executor-prompt.md`,
-`validation-plan.md`, and `work-order.json` (the file `verify --wo-file` reads).
-
-Other beta commands:
-
-```powershell
-sembl clarify  --repo . --task "..."   # judge whether a task is specified enough to scope (exit 2 if blocked)
-sembl doctor   --repo .                # check the optional graph subsystem (tools, graphs, keys, fixes)
-sembl show                             # show the latest Work Order
-sembl list                             # list Work Orders in this repo
-sembl validate                         # older PASS/FAIL form of verify (kept for back-compat)
-```
-
-### Optional graph context
-
-`generate` can use [Graphify](https://pypi.org/project/graphify/) and
-code-review-graph to ground scope in the repo's structure. It is best-effort and
-off the critical path; run `sembl doctor` to see what's installed and how to fix
-gaps, and use `--graph-mode auto|required|off` to control it.
+**Optional and unproven as an outcome-improver** (see Status & honesty above) — the
+older generation half of Sembl. `sembl generate --task "..." --provider openai`
+(needs one provider key: `openai`/`anthropic`/`gemini`/`nvidia`/`openrouter`/
+`tokenrouter`/local `ollama`/`claude-cli`) drafts a "Work Order" — a scoped
+contract + executor prompt + `work-order.json` that `verify --wo-file` reads
+directly — plus `clarify`/`doctor`/`show`/`list` and optional graph context
+(`--graph-mode`). It's interchangeable with GitHub Spec Kit and similar tools;
+reach for it only if you don't already have a spec/planning step. Full command
+reference and setup: [sembl.vercel.app/docs.html#generate](https://sembl.vercel.app/docs.html#generate).
 
 ## Local test
 
