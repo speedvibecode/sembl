@@ -32,7 +32,19 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        python -m pip install --quiet "sembl${{ inputs.sembl-version }}"
+        version_spec="${{ inputs.sembl-version }}"
+        if [ -z "$version_spec" ]; then
+          # No explicit pin: default to the exact ref this Action was invoked at
+          # (e.g. `uses: speedvibecode/sembl@v0.2.0` -> sembl==0.2.0), so a
+          # workflow pinned to a released tag can't silently pick up a newer
+          # sembl's gate semantics later (codex review finding). Falls back to
+          # latest only when the caller used a branch/SHA ref, not a version tag.
+          action_ref="${{ github.action_ref }}"
+          if [[ "$action_ref" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            version_spec="==${action_ref#v}"
+          fi
+        fi
+        python -m pip install --quiet "sembl${version_spec}"
 
         base="${{ inputs.base-ref }}"
         if [ -z "$base" ]; then base="${{ github.event.pull_request.base.sha }}"; fi
