@@ -43,12 +43,15 @@ gh release create vX.Y.Z --title "vX.Y.Z" --notes "…"
 
 The GitHub Release triggers `release.yml` → PyPI Trusted Publishing. PyPI versions are
 **permanent — never reuse a version number.** The site (Vercel) auto-deploys on push,
-so cut the GitHub Release close to the site push to keep "stable on PyPI" honest.
+so cut the GitHub Release close to the site push to keep the site's install copy honest.
 
 ## Toward full automation (staged — owner enables)
 
-The CI guard above already makes an *inconsistent* release impossible. The next step is
-to automate the *bump itself* so the number is never decided by hand:
+The CI guard above only enforces that `tag == pyproject == __init__` — it catches a
+*package* version mismatch, not the 4 site spots listed above, which are still manual
+and unguarded (codex review finding: don't overclaim "impossible" for something CI
+doesn't actually check). The next step is to automate the *bump itself* so the package
+number is never decided by hand:
 
 - **Conventional Commits** (`feat:`, `fix:`, `feat!:`) on every commit to `sembl`.
 - **release-please** (Google's bot): on merge to `master` it reads the commit types,

@@ -83,9 +83,15 @@ class ScopeReport:
             return True
         total = len(self.changed_files) or 1
         within = True
-        if "max_files" in tol and oos > tol["max_files"]:
+        # A malformed contract value (e.g. a string where a number is expected)
+        # must never crash the gate with a raw exception — same
+        # isinstance-before-compare defensiveness as `_churn_over_budget` below.
+        # An unusable value is simply not applied, rather than raising.
+        max_files = tol.get("max_files")
+        if isinstance(max_files, (int, float)) and oos > max_files:
             within = False
-        if "max_fraction" in tol and (oos / total) > tol["max_fraction"]:
+        max_fraction = tol.get("max_fraction")
+        if isinstance(max_fraction, (int, float)) and (oos / total) > max_fraction:
             within = False
         return not within
 
@@ -244,11 +250,19 @@ def parse_unified_diff(text: str) -> tuple[list, int]:
 
     Lets `verify` score a PR or patch without a live checkout (CI, code review).
     Paths come from `+++ b/<path>` (the post-image, authoritative for the new
-    name) and from `diff --git a/<old> b/<new>` headers (which also catch pure
-    renames and deletions where the post-image is /dev/null). `a/`/`b/` prefixes
-    and surrounding quotes are stripped; `/dev/null` is ignored. Line count sums
-    content `+`/`-` lines, excluding the `+++`/`---` file headers — matching the
-    numstat-based budget used in working-tree mode.
+    name), from `rename to <path>` / `copy to <path>` (a pure rename/copy has no
+    content diff, so no `+++`/`---` lines at all — these are the only unambiguous
+    source), and from `diff --git a/<old> b/<new>` headers as a fallback (which
+    also catches deletions where the post-image is /dev/null). The `diff --git`
+    line is naively space-split and is therefore AMBIGUOUS for a path containing
+    a space (`a/x y b/x y` can't be split back into `x y`/`x y` in general) — a
+    forbidden-area rename with a space could otherwise degrade to a silently
+    dropped/truncated path (codex review finding); `rename to`/`copy to` give the
+    exact new path unambiguously in exactly the case that matters (a pure rename
+    has nothing else to parse). `a/`/`b/` prefixes and surrounding quotes are
+    stripped; `/dev/null` is ignored. Line count sums content `+`/`-` lines,
+    excluding the `+++`/`---` file headers — matching the numstat-based budget
+    used in working-tree mode.
     """
     files: list = []
     seen: set = set()
@@ -269,6 +283,11 @@ def parse_unified_diff(text: str) -> tuple[list, int]:
             parts = line.split(" ")
             if len(parts) >= 4:
                 _add(parts[-1])   # b/<new> — survives renames and deletions
+        elif line.startswith("rename to ") or line.startswith("copy to "):
+            # Unambiguous single path — the authoritative new name for a pure
+            # rename/copy, which the `diff --git` line above can mis-split when
+            # the path contains a space.
+            _add(line.split(" to ", 1)[1].strip())
         elif line.startswith("--- "):
             last_a = _strip_ab(line[4:].strip().split("\t", 1)[0])
         elif line.startswith("+++ "):
@@ -359,10 +378,17 @@ def _git_changed_files(root: Path, contract_extra: list | None = None,
             cwd=str(root), capture_output=True, text=True,
             encoding="utf-8", errors="replace", timeout=30,
         )
-    except Exception:
-        return []
+    except Exception as exc:
+        # A failure here means we genuinely don't know what changed — treating
+        # that as "nothing changed" would silently PASS a broken/misconfigured
+        # environment (bad --repo, non-git dir, git ownership rejection). Raise
+        # so the caller surfaces a hard error instead of a false-clean verdict
+        # (codex review finding).
+        raise RuntimeError(f"could not read git status for {root}: {exc}") from exc
     if proc.returncode != 0:
-        return []
+        raise RuntimeError(
+            f"`git status` failed for {root} (exit {proc.returncode}): "
+            f"{proc.stderr.strip() or proc.stdout.strip() or 'no output'}")
 
     content_changed: set | None = None
     try:

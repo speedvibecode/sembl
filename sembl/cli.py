@@ -392,7 +392,11 @@ def validate(repo, wo_id, wo_file, report_file):
             console.print(f"[red]Could not parse executor report:[/red] {error}")
             sys.exit(1)
 
-    result = validate_against_work_order(str(repo_path), work_order, report)
+    try:
+        result = validate_against_work_order(str(repo_path), work_order, report)
+    except RuntimeError as error:
+        console.print(f"[red]Could not read the working tree:[/red] {error}")
+        sys.exit(1)
 
     table = Table(show_header=True, header_style="bold")
     table.add_column("Check")
@@ -515,11 +519,15 @@ def verify(repo, wo_id, wo_file, report_file, diff_file, staged, as_json, strict
         wo_rel = None                       # WO outside the repo: unreachable by the diff
 
     policy = "strict" if strict else "advisory_scope"
-    result = validate_against_work_order(
-        str(repo_path), work_order, report,
-        changed_files=changed_files, diff_line_count=diff_lines,
-        contract_paths=[wo_rel] if wo_rel else None,
-    )
+    try:
+        result = validate_against_work_order(
+            str(repo_path), work_order, report,
+            changed_files=changed_files, diff_line_count=diff_lines,
+            contract_paths=[wo_rel] if wo_rel else None,
+        )
+    except RuntimeError as error:
+        console.print(f"[red]Could not read the working tree:[/red] {error}")
+        sys.exit(1)
     verdict = result.verdict(policy)
 
     if as_json:
@@ -568,7 +576,15 @@ def verify(repo, wo_id, wo_file, report_file, diff_file, staged, as_json, strict
 
     reasons = result.reasons()
     if reasons:
-        table.add_row("Reasons", "\n".join(f"• {r}" for r in reasons))
+        # `reasons()` lists every active finding regardless of whether it
+        # actually affected the verdict (e.g. a tolerated out-of-scope edit is
+        # still reported as a fact under advisory_scope). Labeling it plain
+        # "Reasons" next to a PASS title reads as contradictory — a human sees
+        # "PASS" plus a list of things that sound like rejection reasons (codex
+        # review finding). The label alone is enough to disambiguate; the facts
+        # themselves are unchanged.
+        label = "Reasons" if verdict != "PASS" else "Notes (did not affect verdict)"
+        table.add_row(label, "\n".join(f"• {r}" for r in reasons))
 
     console.print(Panel(
         table,

@@ -323,6 +323,41 @@ def test_eol_only_rewrites_are_not_edits(git_repo, monkeypatch):
     assert v._git_changed_files(git_repo) == ["httpie/ssl_.py", "notes.txt"]
 
 
+def test_git_changed_files_raises_on_nonzero_exit(git_repo, monkeypatch):
+    # A failed `git status` (bad --repo, non-git dir, ownership rejection) must
+    # never look like "nothing changed" -> silent PASS (codex review finding).
+    import sembl.validator as v
+
+    def fake_run(args, **kwargs):
+        return subprocess.CompletedProcess(args, 128, stdout="", stderr="fatal: not a git repository")
+
+    monkeypatch.setattr(v.subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError):
+        v._git_changed_files(git_repo)
+
+
+def test_git_changed_files_raises_on_subprocess_exception(git_repo, monkeypatch):
+    import sembl.validator as v
+
+    def fake_run(args, **kwargs):
+        raise OSError("git not found")
+
+    monkeypatch.setattr(v.subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError):
+        v._git_changed_files(git_repo)
+
+
+def test_validate_against_work_order_propagates_git_failure(git_repo, monkeypatch):
+    import sembl.validator as v
+
+    def fake_run(args, **kwargs):
+        return subprocess.CompletedProcess(args, 128, stdout="", stderr="fatal: not a git repository")
+
+    monkeypatch.setattr(v.subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError):
+        validate_against_work_order(str(git_repo), WO)
+
+
 # ── parse_unified_diff (diff/patch mode for CI) ──────────────────────────────
 
 SAMPLE_DIFF = """\
@@ -366,6 +401,37 @@ def test_parse_unified_diff_handles_deletion():
     files, lines = parse_unified_diff(deletion)
     assert files == ["old/gone.py"]   # /dev/null ignored, path kept from header
     assert lines == 2
+
+
+def test_parse_unified_diff_pure_rename_with_space_in_path():
+    # A pure rename has no content diff -> no +++/--- lines, so `diff --git`'s
+    # naive space-split is the only thing that would otherwise see the new path
+    # — and it mis-splits when the path contains a space. `rename to` gives the
+    # exact, unambiguous new path (codex review finding).
+    from sembl.validator import parse_unified_diff
+    rename = (
+        "diff --git a/infra/old name.py b/infra/new name.py\n"
+        "similarity index 100%\n"
+        "rename from infra/old name.py\n"
+        "rename to infra/new name.py\n"
+    )
+    files, lines = parse_unified_diff(rename)
+    assert "infra/new name.py" in files
+    assert lines == 0
+
+
+def test_pure_rename_with_space_into_forbidden_area_is_a_forbidden_hit():
+    from sembl.validator import parse_unified_diff
+    rename = (
+        "diff --git a/src/old name.py b/infra/new name.py\n"
+        "similarity index 100%\n"
+        "rename from src/old name.py\n"
+        "rename to infra/new name.py\n"
+    )
+    wo = {"editable_paths": ["src/"], "forbidden_areas": ["infra/"]}
+    files, lines = parse_unified_diff(rename)
+    result = validate_against_work_order(".", wo, changed_files=files, diff_line_count=lines)
+    assert "infra/new name.py" in result.forbidden_hits
 
 
 def test_verify_diff_mode_matches_worktree_logic():
@@ -494,6 +560,19 @@ def test_scope_tolerance_override_max_files():
     files3 = ["src/a.py", "lib/x.py", "other/y.py"]     # 2 OOS > max_files 1
     over = validate_against_work_order(".", tol, changed_files=files3)
     assert over.verdict("advisory_scope") == "WARN"
+
+
+def test_malformed_scope_tolerance_does_not_crash():
+    # A malformed contract value (string where a number is expected) must never
+    # raise a raw exception — it's simply not applied (codex review finding).
+    files = ["src/a.py", "lib/helper.py", "other/y.py"]
+    wo = {"editable_paths": ["src/"], "scope_tolerance": {"max_files": "bad"}}
+    result = validate_against_work_order(".", wo, changed_files=files)
+    assert result.verdict("advisory_scope") in ("PASS", "WARN", "BLOCK")  # doesn't raise
+
+    wo2 = {"editable_paths": ["src/"], "scope_tolerance": {"max_fraction": "0.25"}}
+    result2 = validate_against_work_order(".", wo2, changed_files=files)
+    assert result2.verdict("advisory_scope") in ("PASS", "WARN", "BLOCK")
 
 
 # --- gate-contract self-edits (0.1.21, audit P0) ----------------------------------
