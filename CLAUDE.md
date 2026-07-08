@@ -61,3 +61,12 @@ sembl verify --help
   against git log before trusting them.
 - Docs for humans are in `README.md` / `docs/`; keep the README's claims
   exactly as strong as the code — never stronger.
+
+## Systems thinking (owner directive, 2026-07-09 — applies to everything here)
+
+Supremely valued at every scale, smallest fix to biggest design: every change
+is an intervention in a system — name the whole before touching the part; fix
+the class, not the instance; prefer structural leverage (contracts, invariants,
+defaults) over patching call sites; build feedback loops so the system reports
+its own state; when one part breaks, assume its siblings are broken too. Full
+operational version: `~/.claude/CLAUDE.md`.
