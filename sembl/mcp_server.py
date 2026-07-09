@@ -113,6 +113,7 @@ def verify_change(
     report: dict | None = None,
     bounds_file: str | None = None,
     strict: bool = False,
+    acceptance: dict | None = None,
 ) -> dict:
     """Run the gate over a change and return a deterministic PASS/WARN/BLOCK verdict.
 
@@ -121,6 +122,11 @@ def verify_change(
     git. `report` is the actor's self-report (claimed files / validations) — never
     trusted, only checked against reality. Bounds come from the inline fields or a
     `bounds_file` / repo-root `bounds.json`. `strict` promotes out-of-scope to BLOCK.
+    `acceptance` (O12) is the declared-vs-ran behavioral contract:
+    `{"declared": [...], "results": [...]}` from the factory's Acceptance /
+    AcceptanceReport artifacts — a FAIL, an ERROR, or a declared check with no
+    result each BLOCK under every policy. Absent/empty ⇒ no behavioral axis at
+    all (back-compat no-op).
     """
     wo, wo_path = _build_work_order(
         editable_paths, forbidden_areas, churn_budget, scope_tolerance,
@@ -135,17 +141,22 @@ def verify_change(
         repo_path, wo, report,
         changed_files=changed_files, diff_line_count=diff_lines,
         contract_paths=_contract_rel(wo_path, repo_path),
+        acceptance=acceptance,
     )
     data = result.to_dict(policy)
     data["summary"] = {
         "verdict": data["verdict"],
         "files_changed": len(result.changed_files),
         "blocking": bool(result.forbidden_hits or result.fabricated_claims
-                         or result.contract_edits),
+                         or result.contract_edits or result.behavioral_failures
+                         or result.behavioral_errors or result.behavioral_missing),
         "out_of_scope": result.out_of_scope,
         "forbidden_hits": result.forbidden_hits,
         "fabricated_claims": result.fabricated_claims,
         "validation_not_evidenced": result.validation_not_run,
+        "behavioral_failures": result.behavioral_failures,
+        "behavioral_errors": result.behavioral_errors,
+        "behavioral_missing": result.behavioral_missing,
         "reasons": result.reasons(),
     }
     return data

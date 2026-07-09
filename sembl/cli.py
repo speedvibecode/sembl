@@ -447,17 +447,24 @@ def validate(repo, wo_id, wo_file, report_file):
               help="Verify the staged change (git index vs HEAD) instead of the "
                    "whole working tree — what a pre-commit hook should gate. "
                    "Mutually exclusive with --diff.")
+@click.option("--acceptance", "acceptance_file", default=None,
+              type=click.Path(exists=True),
+              help="Behavioral acceptance results (JSON): "
+                   '{"declared": [...], "results": [...]} — a FAIL, an ERROR, or a '
+                   "declared check with no result each BLOCK. Absent = no "
+                   "behavioral axis at all (back-compat no-op).")
 @click.option("--json", "as_json", is_flag=True, default=False,
               help="Emit the full verdict as JSON (for tooling / experiments).")
 @click.option("--strict", is_flag=True, default=False,
               help="Strict gate: out-of-scope edits BLOCK (not just WARN), and any "
                    "WARN becomes a failing exit code. Use in CI for a hard gate.")
-def verify(repo, wo_id, wo_file, report_file, diff_file, staged, as_json, strict):
+def verify(repo, wo_id, wo_file, report_file, diff_file, staged, acceptance_file, as_json, strict):
     """Verify the actual diff against a Work Order and return a PASS/WARN/BLOCK verdict.
 
     The change-control verdict layer: deterministic checks only — scope adherence,
     forbidden-area edits, fabricated success claims, broad churn vs the Work Order's
-    size budget, and validation claimed-but-not-evidenced. No maintainability
+    size budget, validation claimed-but-not-evidenced, and (with --acceptance)
+    declared behavioral checks a factory runner actually ran. No maintainability
     judgement. Self-reports are never trusted.
 
     By default scope is advisory: out-of-scope edits WARN, and only forbidden-area
@@ -492,6 +499,15 @@ def verify(repo, wo_id, wo_file, report_file, diff_file, staged, as_json, strict
             console.print(f"[red]Could not parse executor report:[/red] {error}")
             sys.exit(1)
 
+    acceptance = None
+    if acceptance_file:
+        try:
+            acceptance = _json.loads(
+                Path(acceptance_file).read_text(encoding="utf-8", errors="replace"))
+        except Exception as error:
+            console.print(f"[red]Could not parse acceptance file:[/red] {error}")
+            sys.exit(1)
+
     # Diff mode (CI / code review): score a patch directly, no working tree needed.
     changed_files = diff_lines = None
     if staged and diff_file:
@@ -524,6 +540,7 @@ def verify(repo, wo_id, wo_file, report_file, diff_file, staged, as_json, strict
             str(repo_path), work_order, report,
             changed_files=changed_files, diff_line_count=diff_lines,
             contract_paths=[wo_rel] if wo_rel else None,
+            acceptance=acceptance,
         )
     except RuntimeError as error:
         console.print(f"[red]Could not read the working tree:[/red] {error}")
@@ -550,6 +567,22 @@ def verify(repo, wo_id, wo_file, report_file, diff_file, staged, as_json, strict
     if result.contract_edits:
         table.add_row("Contract self-edit",
                       f"[red]{', '.join(result.contract_edits)}[/red]")
+    if acceptance:
+        table.add_row(
+            "Behavioral failures",
+            f"[red]{', '.join(f['id'] for f in result.behavioral_failures)}[/red]"
+            if result.behavioral_failures else "[green]none[/green]",
+        )
+        table.add_row(
+            "Behavioral errors",
+            f"[red]{', '.join(f['id'] for f in result.behavioral_errors)}[/red]"
+            if result.behavioral_errors else "[green]none[/green]",
+        )
+        table.add_row(
+            "Behavioral missing (not run)",
+            f"[red]{', '.join(result.behavioral_missing)}[/red]"
+            if result.behavioral_missing else "[green]none[/green]",
+        )
     if report is not None:
         table.add_row(
             "Fabricated claims",

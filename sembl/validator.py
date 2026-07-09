@@ -66,6 +66,15 @@ class ScopeReport:
     # a hard breach — a change that can rewrite its own bounds can whitelist anything.
     contract_edits: list = field(default_factory=list)
 
+    # Behavioral acceptance (O12): a declared check the factory runner ran and
+    # reported back. Empty unless an `acceptance` input was supplied to
+    # `validate_against_work_order` — a strict no-op otherwise (verdict
+    # byte-identical to before this axis existed). Always hard, under every
+    # policy — like contract_edits, there is no "advisory behavioral" mode.
+    behavioral_failures: list = field(default_factory=list)  # [{"id","detail"}]: ran, FAILED
+    behavioral_errors: list = field(default_factory=list)    # [{"id","detail"}]: could not run (D3)
+    behavioral_missing: list = field(default_factory=list)   # [id, ...]: declared, no result at all
+
     def _scope_exceeds(self) -> bool:
         # Whether out-of-scope edits should count toward the verdict. EXP-04/05
         # (437 merged PRs) showed an all-or-nothing scope rule false-alarms on
@@ -103,7 +112,11 @@ class ScopeReport:
         #   editable_paths are rarely complete enough to gate on — see EXP-04/05.)
         # contract_edits is hard under EVERY policy: scope may be advisory, but the
         # contract file itself is never editable by the change under review.
-        hard = bool(self.forbidden_hits or self.fabricated_claims or self.contract_edits)
+        # behavioral_* (O12) is likewise hard under EVERY policy: advisory_scope
+        # demotes scope, never behavior — there is no advisory-behavioral policy.
+        hard = bool(self.forbidden_hits or self.fabricated_claims or self.contract_edits
+                    or self.behavioral_failures or self.behavioral_errors
+                    or self.behavioral_missing)
         if policy == "advisory_scope":
             return hard
         return hard or self._scope_exceeds()
@@ -134,6 +147,15 @@ class ScopeReport:
             out.append(f"out-of-scope edits: {', '.join(self.out_of_scope)}")
         if self.fabricated_claims:
             out.append(f"fabricated claims (reported but unchanged): {', '.join(self.fabricated_claims)}")
+        if self.behavioral_failures:
+            parts = [f"{f.get('id')}: {f.get('detail', '')}" for f in self.behavioral_failures]
+            out.append(f"behavioral checks failed: {'; '.join(parts)}")
+        if self.behavioral_errors:
+            parts = [f"{f.get('id')}: {f.get('detail', '')}" for f in self.behavioral_errors]
+            out.append(f"behavioral checks could not run: {'; '.join(parts)}")
+        if self.behavioral_missing:
+            out.append("declared behavioral checks with no result (not run): "
+                       f"{', '.join(self.behavioral_missing)}")
         if self.churn_over_budget:
             c = self.churn_over_budget
             parts = []
@@ -165,13 +187,18 @@ class ScopeReport:
 def _is_contract_path(path: str, extra: list) -> bool:
     """Is `path` part of the gate's own contract surface (never the change's to edit)?
 
-    Contract = the bounds/work-order files the verdict is computed FROM: root
-    `bounds.json`, `.sembl/bounds.json`, `.sembl/work-orders/`, plus any caller-named
-    work-order file (`extra`). Other `.sembl/` content (e.g. a run store's outputs)
-    is tool output, not contract — excluded from scope but never flagged.
+    Contract = the bounds/work-order/acceptance files the verdict is computed FROM:
+    root `bounds.json`, `.sembl/bounds.json`, `.sembl/work-orders/`, root
+    `acceptance.json` / `.sembl/acceptance.json` (O12 — the declared behavioral
+    contract is gate contract surface exactly like bounds: a change that could
+    rewrite the checks judging it could edit its way to a pass), plus any
+    caller-named work-order file (`extra`). Other `.sembl/` content (e.g. a run
+    store's outputs) is tool output, not contract — excluded from scope but never
+    flagged.
     """
     folded = _fold(path)
-    return (folded in ("bounds.json", ".sembl/bounds.json", ".sembl/work-orders")
+    return (folded in ("bounds.json", ".sembl/bounds.json", ".sembl/work-orders",
+                       "acceptance.json", ".sembl/acceptance.json")
             or folded.startswith(".sembl/work-orders/")
             or any(folded == _fold(str(entry)) for entry in extra))
 
@@ -183,6 +210,7 @@ def validate_against_work_order(
     changed_files: list | None = None,
     diff_line_count: int | None = None,
     contract_paths: list | None = None,
+    acceptance: dict | None = None,
 ) -> ScopeReport:
     """Check a change against a Work Order contract.
 
@@ -191,6 +219,15 @@ def validate_against_work_order(
     instead and git is not consulted — this lets `verify` and experiments score a
     diff without a live checkout. `diff_line_count` feeds the churn check in that
     mode (git mode computes it via numstat).
+
+    `acceptance` (O12 — the fourth, behavioral axis) is
+    `{"declared": [{"id","kind","profile"}, ...], "results": [{"id","outcome",
+    "detail", ...}, ...]}` — `declared` from `Acceptance.to_contract()`, `results`
+    from the factory runner's `AcceptanceReport`, never from `report` (the
+    executor's self-report is never trusted for behavioral outcomes). Absent or
+    empty ⇒ the axis is a strict no-op: the verdict is byte-identical to a build
+    with no behavioral axis at all. The gate never executes anything here — it
+    only folds the results it was handed.
     """
     root = Path(repo_path)
     editable = [_norm(p) for p in work_order.get("editable_paths") or []]
@@ -242,7 +279,60 @@ def validate_against_work_order(
     result.churn_over_budget = _churn_over_budget(
         root, result.changed_files, work_order.get("churn_budget"), line_count,
     )
+
+    (result.behavioral_failures, result.behavioral_errors,
+     result.behavioral_missing) = _fold_acceptance(acceptance)
     return result
+
+
+def _fold_acceptance(acceptance: dict | None) -> tuple[list, list, list]:
+    """Fold an `acceptance` input into (behavioral_failures, behavioral_errors,
+    behavioral_missing) — the O12 behavioral axis, deterministic pure set/dict
+    comparison, no execution, no model.
+
+    `declared` (the checks the spec attached) and `results` (what the factory
+    runner actually ran) are matched by id. A declared id with no result is the
+    behavioral analog of `fabricated_claims`: it cannot be trusted to have
+    passed, so it lands in `behavioral_missing` (BLOCK). A result whose outcome
+    is FAIL/ERROR lands in the matching bucket, each carrying its `detail` for
+    the reasons/feedback text. PASS produces no finding. Absent/malformed input
+    ⇒ ([], [], []) — a strict no-op, never a raised exception (mirrors the
+    defensive isinstance-before-compare discipline used elsewhere in this file).
+    """
+    if not isinstance(acceptance, dict) or not acceptance:
+        return [], [], []
+    declared = acceptance.get("declared")
+    results = acceptance.get("results")
+    declared = declared if isinstance(declared, list) else []
+    results = results if isinstance(results, list) else []
+
+    declared_ids = [d.get("id") for d in declared if isinstance(d, dict) and d.get("id")]
+    results_by_id = {
+        r.get("id"): r for r in results if isinstance(r, dict) and r.get("id")
+    }
+
+    failures: list = []
+    errors: list = []
+    missing: list = []
+    for check_id in declared_ids:
+        r = results_by_id.get(check_id)
+        if r is None:
+            missing.append(check_id)
+            continue
+        outcome = r.get("outcome")
+        detail = r.get("detail", "")
+        if outcome == "FAIL":
+            failures.append({"id": check_id, "detail": detail})
+        elif outcome == "PASS":
+            pass  # the only outcome that clears a declared check
+        else:
+            # ERROR, a missing/unknown outcome, or any other value: the check did
+            # not verifiably pass. Fail closed (D3) — an unrecognized outcome must
+            # never be an implicit PASS, or a buggy runner silently green-lights.
+            if outcome != "ERROR":
+                detail = f"unrecognized outcome {outcome!r}" + (f": {detail}" if detail else "")
+            errors.append({"id": check_id, "detail": detail})
+    return failures, errors, missing
 
 
 def parse_unified_diff(text: str) -> tuple[list, int]:

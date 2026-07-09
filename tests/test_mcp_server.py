@@ -64,6 +64,23 @@ def test_verify_change_scope_is_advisory_by_default():
     assert strict["verdict"] == "BLOCK"
 
 
+def test_verify_change_accepts_acceptance_and_blocks_on_fail():
+    acc = {"declared": [{"id": "chk-1", "kind": "example", "profile": "command"}],
+           "results": [{"id": "chk-1", "outcome": "FAIL", "detail": "boom"}]}
+    out = verify_change(diff=DIFF, editable_paths=["src/", "infra/"], acceptance=acc)
+    assert out["verdict"] == "BLOCK"
+    assert out["summary"]["behavioral_failures"] == [{"id": "chk-1", "detail": "boom"}]
+    assert out["summary"]["blocking"] is True
+
+
+def test_verify_change_no_acceptance_is_back_compat_noop():
+    # Absent vs explicitly-empty acceptance must produce a byte-identical verdict
+    # to a call that never mentions acceptance at all.
+    baseline = verify_change(diff=DIFF, editable_paths=["src/", "infra/"])
+    empty = verify_change(diff=DIFF, editable_paths=["src/", "infra/"], acceptance={})
+    assert baseline == empty
+
+
 def test_verify_change_uses_bounds_file(tmp_path):
     import json
     b = tmp_path / "bounds.json"

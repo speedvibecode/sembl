@@ -141,6 +141,45 @@ class VerifyCommandTests(unittest.TestCase):
         self.assertEqual(strict.exit_code, 1)
 
 
+class VerifyAcceptanceFlagTests(unittest.TestCase):
+    """`--acceptance <file.json>` wires the O12 behavioral axis into `sembl verify`."""
+
+    def test_acceptance_flag_blocks_on_declared_fail(self):
+        runner = CliRunner()
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            _init_repo(repo)
+            wo = _write_wo(repo)
+            (repo / "src" / "a.py").write_text("FIXED\n", encoding="utf-8")
+            acc_file = repo / "acc.json"
+            acc_file.write_text(json.dumps({
+                "declared": [{"id": "chk-1", "kind": "example", "profile": "command"}],
+                "results": [{"id": "chk-1", "outcome": "FAIL", "detail": "assert failed"}],
+            }), encoding="utf-8")
+            result = runner.invoke(cli.main,
+                ["verify", "--repo", tmp, "--wo-file", str(wo),
+                 "--acceptance", str(acc_file), "--json"])
+        payload = json.loads(result.output)
+        self.assertEqual(payload["verdict"], "BLOCK")
+        self.assertTrue(payload["behavioral_failures"])
+        self.assertEqual(result.exit_code, 1)
+
+    def test_no_acceptance_flag_is_back_compat_noop(self):
+        runner = CliRunner()
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            _init_repo(repo)
+            wo = _write_wo(repo)
+            (repo / "src" / "a.py").write_text("FIXED\n", encoding="utf-8")
+            result = runner.invoke(cli.main,
+                ["verify", "--repo", tmp, "--wo-file", str(wo), "--json"])
+        payload = json.loads(result.output)
+        self.assertEqual(payload["verdict"], "PASS")
+        self.assertEqual(payload["behavioral_failures"], [])
+        self.assertEqual(payload["behavioral_errors"], [])
+        self.assertEqual(payload["behavioral_missing"], [])
+
+
 class VerifyStagedTests(unittest.TestCase):
     """--staged gates the index (the commit being made), not the whole worktree."""
 

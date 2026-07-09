@@ -722,3 +722,170 @@ def test_contract_path_folds_case(monkeypatch):
     # a case-twisted edit of the gate's own contract still surfaces as one
     assert result.contract_edits == ["Bounds.json"]
     assert result.changed_files == ["src/ok.py"]
+
+
+# ── O12 behavioral acceptance axis (WP1 — gate side) ──────────────────────────
+# The fourth gate axis: a declared behavioral check the factory runner ran and
+# reported back (never the executor's `report`). FAIL/ERROR/missing each BLOCK,
+# under every policy, exactly like contract_edits — there is no advisory-
+# behavioral mode. Absent/empty `acceptance` is a strict no-op.
+
+ACC_DECLARED = [{"id": "chk-1", "kind": "example", "profile": "command"}]
+
+
+def test_behavioral_fail_blocks():
+    acc = {"declared": ACC_DECLARED,
+           "results": [{"id": "chk-1", "outcome": "FAIL", "detail": "exit 1"}]}
+    result = validate_against_work_order(
+        ".", {"editable_paths": ["src/"]}, changed_files=["src/a.py"], acceptance=acc)
+    assert result.behavioral_failures == [{"id": "chk-1", "detail": "exit 1"}]
+    assert result.behavioral_errors == []
+    assert result.behavioral_missing == []
+    assert result.verdict() == "BLOCK"
+    assert result.verdict("advisory_scope") == "BLOCK"
+
+
+def test_behavioral_error_blocks():
+    acc = {"declared": ACC_DECLARED,
+           "results": [{"id": "chk-1", "outcome": "ERROR", "detail": "timeout"}]}
+    result = validate_against_work_order(
+        ".", {"editable_paths": ["src/"]}, changed_files=["src/a.py"], acceptance=acc)
+    assert result.behavioral_errors == [{"id": "chk-1", "detail": "timeout"}]
+    assert result.verdict() == "BLOCK"
+    assert result.verdict("advisory_scope") == "BLOCK"
+
+
+def test_behavioral_missing_blocks():
+    # Declared but no matching result at all -> the behavioral analog of
+    # fabricated_claims: cannot be trusted to have passed.
+    acc = {"declared": ACC_DECLARED, "results": []}
+    result = validate_against_work_order(
+        ".", {"editable_paths": ["src/"]}, changed_files=["src/a.py"], acceptance=acc)
+    assert result.behavioral_missing == ["chk-1"]
+    assert result.verdict() == "BLOCK"
+    assert result.verdict("advisory_scope") == "BLOCK"
+
+
+def test_behavioral_all_pass_leaves_verdict_to_trespass_axes():
+    acc = {"declared": ACC_DECLARED, "results": [{"id": "chk-1", "outcome": "PASS"}]}
+    result = validate_against_work_order(
+        ".", {"editable_paths": ["src/"]}, changed_files=["src/a.py"], acceptance=acc)
+    assert result.behavioral_failures == []
+    assert result.behavioral_errors == []
+    assert result.behavioral_missing == []
+    assert result.verdict() == "PASS"        # in-scope, no report -> PASS as before
+
+
+def test_no_acceptance_is_no_op_diff_mode():
+    wo = {"editable_paths": ["src/"]}
+    baseline = validate_against_work_order(".", wo, changed_files=["src/a.py"])
+    absent = validate_against_work_order(".", wo, changed_files=["src/a.py"], acceptance=None)
+    empty = validate_against_work_order(".", wo, changed_files=["src/a.py"], acceptance={})
+    assert baseline.to_dict() == absent.to_dict() == empty.to_dict()
+    assert baseline.verdict() == "PASS"
+
+
+def test_no_acceptance_is_no_op_working_tree_mode(git_repo):
+    (git_repo / "httpie" / "ssl_.py").write_text("FIXED", encoding="utf-8")
+    baseline = validate_against_work_order(str(git_repo), WO)
+    absent = validate_against_work_order(str(git_repo), WO, acceptance=None)
+    empty = validate_against_work_order(str(git_repo), WO, acceptance={"declared": [], "results": []})
+    assert baseline.to_dict() == absent.to_dict() == empty.to_dict()
+    assert baseline.verdict() == "PASS"
+
+
+def test_behavioral_dominates_over_scope_warn():
+    # src/b.py is out-of-scope -> WARN under advisory_scope on its own; a FAILing
+    # declared behavioral check must still BLOCK (behavior is never demoted).
+    wo = {"editable_paths": ["src/a.py"]}
+    acc = {"declared": ACC_DECLARED,
+           "results": [{"id": "chk-1", "outcome": "FAIL", "detail": "boom"}]}
+    result = validate_against_work_order(".", wo, changed_files=["src/b.py"], acceptance=acc)
+    assert result.out_of_scope == ["src/b.py"]
+    assert result.verdict("advisory_scope") == "BLOCK"
+
+
+def test_reasons_ordering_hard_then_behavioral_then_soft():
+    wo = {"editable_paths": ["src/a.py"], "churn_budget": {"max_files": 0}}
+    acc = {"declared": [{"id": "chk-1"}, {"id": "chk-2"}],
+           "results": [{"id": "chk-1", "outcome": "FAIL", "detail": "bad"}]}
+    # chk-2 is declared but carries no result -> behavioral_missing
+    result = validate_against_work_order(
+        ".", wo, changed_files=["src/a.py", "src/b.py"], acceptance=acc)
+    reasons = result.reasons()
+    idx_oos = next(i for i, r in enumerate(reasons) if "out-of-scope" in r)
+    idx_fail = next(i for i, r in enumerate(reasons) if "behavioral checks failed" in r)
+    idx_missing = next(i for i, r in enumerate(reasons) if "no result (not run)" in r)
+    idx_churn = next(i for i, r in enumerate(reasons) if "churn over budget" in r)
+    assert idx_oos < idx_fail < idx_missing < idx_churn
+
+
+def test_summary_and_to_dict_surface_behavioral_lists():
+    acc = {"declared": ACC_DECLARED,
+           "results": [{"id": "chk-1", "outcome": "FAIL", "detail": "nope"}]}
+    result = validate_against_work_order(
+        ".", {"editable_paths": ["src/"]}, changed_files=["src/a.py"], acceptance=acc)
+    data = result.to_dict()
+    assert data["behavioral_failures"] == [{"id": "chk-1", "detail": "nope"}]
+    assert data["behavioral_errors"] == []
+    assert data["behavioral_missing"] == []
+
+
+def test_unrecognized_outcome_fails_closed():
+    # A result whose outcome is not PASS/FAIL/ERROR (typo, buggy runner, missing
+    # key) must never be an implicit PASS — it lands in behavioral_errors (D3).
+    acc = {"declared": ACC_DECLARED,
+           "results": [{"id": "chk-1", "outcome": "SKIPPED", "detail": "wat"}]}
+    result = validate_against_work_order(
+        ".", {"editable_paths": ["src/"]}, changed_files=["src/a.py"], acceptance=acc)
+    assert result.behavioral_errors == [
+        {"id": "chk-1", "detail": "unrecognized outcome 'SKIPPED': wat"}]
+    assert result.verdict() == "BLOCK"
+    assert result.verdict("advisory_scope") == "BLOCK"
+
+    # Same for a result with no outcome key at all.
+    acc = {"declared": ACC_DECLARED, "results": [{"id": "chk-1"}]}
+    result = validate_against_work_order(
+        ".", {"editable_paths": ["src/"]}, changed_files=["src/a.py"], acceptance=acc)
+    assert result.behavioral_errors == [
+        {"id": "chk-1", "detail": "unrecognized outcome None"}]
+    assert result.verdict() == "BLOCK"
+
+
+def test_malformed_acceptance_does_not_crash():
+    result = validate_against_work_order(
+        ".", {"editable_paths": ["src/"]}, changed_files=["src/a.py"],
+        acceptance={"declared": "not-a-list", "results": None})
+    assert result.behavioral_failures == []
+    assert result.behavioral_errors == []
+    assert result.behavioral_missing == []
+    assert result.verdict() == "PASS"
+
+
+# ── acceptance.json is gate contract surface (O12 §3.3) ──────────────────────
+
+def test_acceptance_json_self_edit_in_diff_blocks_as_contract():
+    wo = {"editable_paths": ["src/"]}
+    result = validate_against_work_order(
+        ".", wo, changed_files=["src/app.py", "acceptance.json"])
+    assert result.contract_edits == ["acceptance.json"]
+    assert result.changed_files == ["src/app.py"]
+    assert result.verdict("advisory_scope") == "BLOCK"
+
+
+def test_dot_sembl_acceptance_json_self_edit_in_diff_blocks_as_contract():
+    wo = {"editable_paths": ["src/"]}
+    result = validate_against_work_order(
+        ".", wo, changed_files=["src/app.py", ".sembl/acceptance.json"])
+    assert result.contract_edits == [".sembl/acceptance.json"]
+    assert result.verdict("advisory_scope") == "BLOCK"
+
+
+def test_tracked_acceptance_edit_is_a_contract_finding_git_mode(git_repo):
+    (git_repo / "acceptance.json").write_text('{"checks": []}', encoding="utf-8")
+    _commit(git_repo, "add acceptance")
+    (git_repo / "acceptance.json").write_text('{"checks": [{"id": "x"}]}', encoding="utf-8")
+    result = validate_against_work_order(str(git_repo), WO)
+    assert result.contract_edits == ["acceptance.json"]
+    assert result.verdict("advisory_scope") == "BLOCK"
+    assert "acceptance.json" not in result.changed_files
